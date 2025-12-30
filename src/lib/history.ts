@@ -1,6 +1,7 @@
 import { readdir, readFile, stat } from 'fs/promises';
 import { join } from 'path';
 import { PROJECTS_DIR, decodeProjectPath, getProjectDisplayName } from '../utils/paths.js';
+import type { Message } from './formatter.js';
 
 /**
  * Load all conversations from ~/.claude/projects
@@ -123,11 +124,11 @@ async function parseConversationFile(filePath: string, fallbackProjectPath: stri
 /**
  * Load full messages from a conversation file
  */
-export async function loadConversationMessages(filePath) {
+export async function loadConversationMessages(filePath: string): Promise<Message[]> {
   const content = await readFile(filePath, 'utf-8');
   const lines = content.trim().split('\n').filter(Boolean);
 
-  const messages = [];
+  const messages: Message[] = [];
 
   for (const line of lines) {
     try {

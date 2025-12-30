@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { loadConversationMessages } from '../lib/history.js';
-import { formatUserMessage, formatAssistantMessage } from '../lib/formatter.js';
+import { formatMessage, shouldStartCollapsed, Message } from '../lib/formatter.js';
 
 interface ConversationDetailProps {
   conversation: {
@@ -23,8 +23,8 @@ export function ConversationDetail({ conversation, onBack, onResume }: Conversat
   const [loading, setLoading] = useState(true);
   const [scrollOffset, setScrollOffset] = useState(0);
   const [selectedMessage, setSelectedMessage] = useState(0);
-  const [allLines, setAllLines] = useState<LineInfo[]>([]);
-  const [messageCount, setMessageCount] = useState(0);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [collapsedSet, setCollapsedSet] = useState<Set<number>>(new Set());
 
   // Calculate visible height (leave room for header and status bar)
   const visibleHeight = Math.max(5, (process.stdout.rows || 24) - 8);
@@ -33,43 +33,53 @@ export function ConversationDetail({ conversation, onBack, onResume }: Conversat
     async function load() {
       try {
         const msgs = await loadConversationMessages(conversation.filePath);
-        setMessageCount(msgs.length);
+        setMessages(msgs);
 
-        // Format all messages and split into lines, tracking which message each line belongs to
-        const lines: LineInfo[] = [];
-        const termWidth = process.stdout.columns || 80;
-        const maxWidth = termWidth - 6; // Account for padding and selection indicator
-
-        for (let msgIdx = 0; msgIdx < msgs.length; msgIdx++) {
-          const msg = msgs[msgIdx];
-          const formatted =
-            msg.type === 'user' ? formatUserMessage(msg.content) : formatAssistantMessage(msg.content);
-
-          const msgLines = formatted.split('\n');
-
-          for (const line of msgLines) {
-            // Wrap long lines
-            if (line.length <= maxWidth) {
-              lines.push({ text: line, messageIndex: msgIdx });
-            } else {
-              for (let i = 0; i < line.length; i += maxWidth) {
-                lines.push({ text: line.slice(i, i + maxWidth), messageIndex: msgIdx });
-              }
-            }
+        // Initialize collapsed state - messages with only collapsible content start collapsed
+        const initialCollapsed = new Set<number>();
+        msgs.forEach((msg, idx) => {
+          if (shouldStartCollapsed(msg)) {
+            initialCollapsed.add(idx);
           }
-          // Empty line between messages (belongs to current message for highlighting)
-          lines.push({ text: '', messageIndex: msgIdx });
-        }
-
-        setAllLines(lines);
+        });
+        setCollapsedSet(initialCollapsed);
       } catch (err: any) {
-        setAllLines([{ text: `Error loading conversation: ${err.message}`, messageIndex: 0 }]);
-        setMessageCount(1);
+        setMessages([{ type: 'assistant', content: `Error loading: ${err.message}` }]);
       }
       setLoading(false);
     }
     load();
   }, [conversation.filePath]);
+
+  // Compute lines from messages based on collapsed state
+  const allLines = useMemo(() => {
+    const lines: LineInfo[] = [];
+    const termWidth = process.stdout.columns || 80;
+    const maxWidth = termWidth - 6; // Account for padding and selection indicator
+
+    for (let msgIdx = 0; msgIdx < messages.length; msgIdx++) {
+      const msg = messages[msgIdx];
+      const isCollapsed = collapsedSet.has(msgIdx);
+      const formatted = formatMessage(msg, isCollapsed);
+
+      const msgLines = formatted.split('\n');
+
+      for (const line of msgLines) {
+        // Wrap long lines
+        if (line.length <= maxWidth) {
+          lines.push({ text: line, messageIndex: msgIdx });
+        } else {
+          for (let i = 0; i < line.length; i += maxWidth) {
+            lines.push({ text: line.slice(i, i + maxWidth), messageIndex: msgIdx });
+          }
+        }
+      }
+      // Empty line between messages
+      lines.push({ text: '', messageIndex: msgIdx });
+    }
+
+    return lines;
+  }, [messages, collapsedSet]);
 
   // Find the line range for a given message
   const getMessageLineRange = (msgIndex: number): { start: number; end: number } => {
@@ -102,6 +112,18 @@ export function ConversationDetail({ conversation, onBack, onResume }: Conversat
 
   const maxScroll = Math.max(0, allLines.length - visibleHeight);
 
+  const toggleCollapsed = (msgIndex: number) => {
+    setCollapsedSet((prev) => {
+      const next = new Set(prev);
+      if (next.has(msgIndex)) {
+        next.delete(msgIndex);
+      } else {
+        next.add(msgIndex);
+      }
+      return next;
+    });
+  };
+
   useInput((input, key) => {
     if (input === 'q' || key.escape) {
       onBack();
@@ -113,12 +135,18 @@ export function ConversationDetail({ conversation, onBack, onResume }: Conversat
       return;
     }
 
+    // Spacebar toggles collapsed state
+    if (input === ' ') {
+      toggleCollapsed(selectedMessage);
+      return;
+    }
+
     // j/k for message selection
     if (input === 'k') {
       setSelectedMessage((prev) => Math.max(0, prev - 1));
     }
     if (input === 'j') {
-      setSelectedMessage((prev) => Math.min(messageCount - 1, prev + 1));
+      setSelectedMessage((prev) => Math.min(messages.length - 1, prev + 1));
     }
 
     // Arrow keys for scrolling
@@ -155,6 +183,7 @@ export function ConversationDetail({ conversation, onBack, onResume }: Conversat
   }
 
   const visibleLines = allLines.slice(scrollOffset, scrollOffset + visibleHeight);
+  const isSelectedCollapsed = collapsedSet.has(selectedMessage);
 
   return (
     <Box flexDirection="column" flexGrow={1}>
@@ -190,7 +219,9 @@ export function ConversationDetail({ conversation, onBack, onResume }: Conversat
 
       <Box paddingX={1} marginTop={1}>
         <Text dimColor>
-          Msg {selectedMessage + 1}/{messageCount} · Line {scrollOffset + 1}-
+          Msg {selectedMessage + 1}/{messages.length}
+          {isSelectedCollapsed ? ' [collapsed]' : ''}
+          {' · '}Line {scrollOffset + 1}-
           {Math.min(scrollOffset + visibleHeight, allLines.length)}/{allLines.length}
           {maxScroll > 0 && ` (${Math.round((scrollOffset / maxScroll) * 100)}%)`}
         </Text>

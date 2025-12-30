@@ -10,33 +10,94 @@ marked.setOptions({
   }),
 });
 
+export interface Message {
+  type: 'user' | 'assistant';
+  content: any;
+  timestamp?: string;
+  model?: string;
+}
+
+/**
+ * Check if a message has collapsible content (tool calls or thinking blocks)
+ */
+export function hasCollapsibleContent(message: Message): boolean {
+  if (message.type === 'user') return false;
+  if (typeof message.content === 'string') return false;
+  if (!Array.isArray(message.content)) return false;
+
+  return message.content.some(
+    (block: any) => block.type === 'thinking' || block.type === 'tool_use'
+  );
+}
+
+/**
+ * Check if a message should start collapsed by default
+ * (only if it ONLY contains collapsible content, no text)
+ */
+export function shouldStartCollapsed(message: Message): boolean {
+  if (message.type === 'user') return false;
+  if (typeof message.content === 'string') return false;
+  if (!Array.isArray(message.content)) return false;
+
+  const hasText = message.content.some((block: any) => block.type === 'text' && block.text?.trim());
+  const hasCollapsible = message.content.some(
+    (block: any) => block.type === 'thinking' || block.type === 'tool_use'
+  );
+
+  // Start collapsed if it has collapsible content but no text
+  return hasCollapsible && !hasText;
+}
+
 /**
  * Format a user message for display
  */
-export function formatUserMessage(content) {
+export function formatUserMessage(content: any, collapsed: boolean): string {
   const text = typeof content === 'string' ? content : extractTextContent(content);
+  if (collapsed) {
+    const preview = text.slice(0, 60).replace(/\n/g, ' ');
+    return chalk.cyan.bold('You: ') + chalk.cyan(preview + (text.length > 60 ? '...' : ''));
+  }
   return chalk.cyan.bold('You: ') + chalk.cyan(text);
 }
 
 /**
  * Format an assistant message for display
  */
-export function formatAssistantMessage(content) {
+export function formatAssistantMessage(content: any, collapsed: boolean): string {
   if (typeof content === 'string') {
+    if (collapsed) {
+      const preview = content.slice(0, 60).replace(/\n/g, ' ');
+      return chalk.white(preview + (content.length > 60 ? '...' : ''));
+    }
     return chalk.white(marked(content).trim());
   }
 
   // Handle array of content blocks
-  const parts = [];
+  const parts: string[] = [];
   for (const block of content) {
     if (block.type === 'text') {
-      parts.push(marked(block.text).trim());
+      if (collapsed) {
+        const preview = block.text.slice(0, 60).replace(/\n/g, ' ');
+        parts.push(preview + (block.text.length > 60 ? '...' : ''));
+      } else {
+        parts.push(marked(block.text).trim());
+      }
     } else if (block.type === 'thinking') {
-      parts.push(chalk.dim.italic('[Thinking...]'));
+      if (collapsed) {
+        parts.push(chalk.dim.italic('[Thinking...]'));
+      } else {
+        parts.push(chalk.dim.italic('--- Thinking ---'));
+        parts.push(chalk.dim(block.thinking));
+        parts.push(chalk.dim.italic('--- End Thinking ---'));
+      }
     } else if (block.type === 'tool_use') {
-      parts.push(formatToolUse(block));
+      if (collapsed) {
+        parts.push(formatToolUseCollapsed(block));
+      } else {
+        parts.push(formatToolUseExpanded(block));
+      }
     } else if (block.type === 'tool_result') {
-      // Skip tool results in abbreviated view
+      // Skip tool results
     }
   }
 
@@ -44,9 +105,9 @@ export function formatAssistantMessage(content) {
 }
 
 /**
- * Format a tool_use block as abbreviated
+ * Format a tool_use block as collapsed (abbreviated)
  */
-function formatToolUse(block) {
+function formatToolUseCollapsed(block: any): string {
   const name = block.name || 'unknown';
   let input = '';
 
@@ -76,13 +137,45 @@ function formatToolUse(block) {
 }
 
 /**
+ * Format a tool_use block as expanded (full details)
+ */
+function formatToolUseExpanded(block: any): string {
+  const name = block.name || 'unknown';
+  const lines: string[] = [];
+
+  lines.push(chalk.yellow.bold(`--- Tool: ${name} ---`));
+
+  if (block.input) {
+    const inputStr = typeof block.input === 'string'
+      ? block.input
+      : JSON.stringify(block.input, null, 2);
+    lines.push(chalk.dim(inputStr));
+  }
+
+  lines.push(chalk.yellow.bold(`--- End Tool ---`));
+
+  return lines.join('\n');
+}
+
+/**
+ * Format a message with collapsed state
+ */
+export function formatMessage(message: Message, collapsed: boolean): string {
+  if (message.type === 'user') {
+    return formatUserMessage(message.content, collapsed);
+  } else {
+    return formatAssistantMessage(message.content, collapsed);
+  }
+}
+
+/**
  * Extract text content from a content array
  */
-function extractTextContent(content) {
+function extractTextContent(content: any): string {
   if (Array.isArray(content)) {
     return content
-      .filter((b) => b.type === 'text')
-      .map((b) => b.text)
+      .filter((b: any) => b.type === 'text')
+      .map((b: any) => b.text)
       .join('\n');
   }
   return String(content);
@@ -91,10 +184,10 @@ function extractTextContent(content) {
 /**
  * Format a timestamp as a relative or absolute date
  */
-export function formatTimestamp(timestamp) {
+export function formatTimestamp(timestamp: string): string {
   const date = new Date(timestamp);
   const now = new Date();
-  const diffMs = now - date;
+  const diffMs = now.getTime() - date.getTime();
   const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
 
   if (diffDays === 0) {
@@ -111,7 +204,7 @@ export function formatTimestamp(timestamp) {
 /**
  * Truncate text to a max length
  */
-export function truncate(text, maxLen = 50) {
+export function truncate(text: string | undefined, maxLen = 50): string {
   if (!text) return '';
   const singleLine = text.replace(/\n/g, ' ').trim();
   if (singleLine.length <= maxLen) return singleLine;
