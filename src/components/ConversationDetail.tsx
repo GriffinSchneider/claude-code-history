@@ -206,12 +206,24 @@ export function ConversationDetail({ conversation, onBack, onResume }: Conversat
       setScrollOffset((prev) => Math.min(maxScroll, prev + visibleHeight));
     }
 
-    // Ctrl+u/d for half-page
+    // Ctrl+u/d for half-page (also moves selection to middle of viewport)
     if (key.ctrl && input === 'u') {
-      setScrollOffset((prev) => Math.max(0, prev - Math.floor(visibleHeight / 2)));
+      const halfPage = Math.floor(visibleHeight / 2);
+      const newOffset = Math.max(0, scrollOffset - halfPage);
+      setScrollOffset(newOffset);
+      const middleLine = Math.min(newOffset + halfPage, allLines.length - 1);
+      if (allLines[middleLine]) {
+        setSelectedMessage(allLines[middleLine].messageIndex);
+      }
     }
     if (key.ctrl && input === 'd') {
-      setScrollOffset((prev) => Math.min(maxScroll, prev + Math.floor(visibleHeight / 2)));
+      const halfPage = Math.floor(visibleHeight / 2);
+      const newOffset = Math.min(maxScroll, scrollOffset + halfPage);
+      setScrollOffset(newOffset);
+      const middleLine = Math.min(newOffset + halfPage, allLines.length - 1);
+      if (allLines[middleLine]) {
+        setSelectedMessage(allLines[middleLine].messageIndex);
+      }
     }
 
     // ! to open JSON file in $EDITOR

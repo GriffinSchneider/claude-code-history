@@ -9,10 +9,10 @@ export function ConversationList({ conversations, onSelect, onQuit }) {
   const terminalWidth = process.stdout.columns || 80;
   const terminalHeight = process.stdout.rows || 24;
 
-  // Each conversation takes 3 lines + 1 for spacing between items
-  const linesPerItem = 4;
-  // Leave room for header (2 lines) and status bar (2 lines)
-  const visibleItems = Math.max(3, Math.floor((terminalHeight - 4) / linesPerItem));
+  // Each conversation takes 2-3 lines + 1 for spacing. Use 3 as average.
+  const linesPerItem = 3;
+  // Leave room for header (2 lines) and status bar (1 line)
+  const visibleItems = Math.max(3, Math.floor((terminalHeight - 3) / linesPerItem));
 
   // Summary gets most of the width, minus indent and some padding
   const summaryWidth = Math.max(40, terminalWidth - 6);
