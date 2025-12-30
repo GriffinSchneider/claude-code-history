@@ -4,6 +4,19 @@ import { PROJECTS_DIR, decodeProjectPath, getProjectDisplayName } from '../utils
 import { extractTextContent, type Message } from './formatter.js';
 
 /**
+ * Check if a message is system-generated (not actual user input)
+ */
+function isSystemGeneratedMessage(text: string): boolean {
+  const trimmed = text.trim();
+  return (
+    trimmed.startsWith('Caveat:') ||
+    trimmed.startsWith('<system-reminder>') ||
+    trimmed.startsWith('<command-name>') ||
+    trimmed.startsWith('<local-command-stdout>')
+  );
+}
+
+/**
  * Load all conversations from ~/.claude/projects
  * Returns array of conversation summaries sorted by most recent
  */
@@ -92,8 +105,12 @@ async function parseConversationFile(filePath: string, fallbackProjectPath: stri
         messageCount++;
 
         // Capture first user message as fallback title
+        // Skip system-generated messages (Caveat, system-reminder, etc.)
         if (entry.type === 'user' && !firstUserMessage && entry.message?.content) {
-          firstUserMessage = extractTextContent(entry.message.content);
+          const text = extractTextContent(entry.message.content);
+          if (!isSystemGeneratedMessage(text)) {
+            firstUserMessage = text;
+          }
         }
       }
     } catch (err) {
