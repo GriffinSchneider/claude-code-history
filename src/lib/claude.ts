@@ -2,9 +2,8 @@ import { spawn } from 'child_process';
 
 /**
  * Launch Claude Code with --resume to continue a session
- * This will exit the current process and hand off to claude
  */
-export function resumeSession(sessionId) {
+export function resumeSession(sessionId: string) {
   const child = spawn('claude', ['--resume', sessionId], {
     stdio: 'inherit',
     shell: true,

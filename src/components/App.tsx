@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useApp } from 'ink';
 import { loadConversations } from '../lib/history.js';
-import { resumeSession } from '../lib/claude.js';
 import { ConversationList } from './ConversationList.js';
 import { ConversationDetail } from './ConversationDetail.js';
 import { StatusBar } from './StatusBar.js';
 
-export function App() {
+interface AppProps {
+  onResume?: (sessionId: string) => void;
+}
+
+export function App({ onResume }: AppProps) {
   const { exit } = useApp();
   const [view, setView] = useState('list'); // 'list' or 'detail'
   const [conversations, setConversations] = useState([]);
@@ -32,12 +35,11 @@ export function App() {
     setSelectedConversation(null);
   };
 
-  const handleResume = (sessionId) => {
-    // Exit ink and launch claude
+  const handleResume = (sessionId: string) => {
+    // Signal to outer scope that we want to resume this session
+    onResume?.(sessionId);
+    // Exit Ink - cleanup and spawn happens after waitUntilExit() resolves
     exit();
-    setTimeout(() => {
-      resumeSession(sessionId);
-    }, 100);
   };
 
   const handleQuit = () => {
