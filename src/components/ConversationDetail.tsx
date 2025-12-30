@@ -20,6 +20,11 @@ interface LineInfo {
   messageIndex: number;
 }
 
+interface MessageRange {
+  start: number;
+  end: number;
+}
+
 // Header takes up 3 lines (border + content + margin)
 const HEADER_LINES = 3;
 
@@ -58,8 +63,10 @@ export function ConversationDetail({ conversation, onBack, onResume }: Conversat
   }, [conversation.filePath]);
 
   // Compute lines from messages based on collapsed state
-  const allLines = useMemo(() => {
+  // Also pre-compute message ranges for O(1) lookup
+  const { allLines, messageRanges } = useMemo(() => {
     const lines: LineInfo[] = [];
+    const ranges: MessageRange[] = [];
     const termWidth = process.stdout.columns || 80;
     const maxWidth = termWidth - 6; // Account for padding and selection indicator
 
@@ -72,14 +79,16 @@ export function ConversationDetail({ conversation, onBack, onResume }: Conversat
       const wrapped = wrapAnsi(formatted, maxWidth, { hard: true, trim: false });
       const msgLines = wrapped.split('\n');
 
+      const start = lines.length;
       for (const line of msgLines) {
         lines.push({ text: line, messageIndex: msgIdx });
       }
       // Empty line between messages
       lines.push({ text: '', messageIndex: msgIdx });
+      ranges.push({ start, end: lines.length - 1 });
     }
 
-    return lines;
+    return { allLines: lines, messageRanges: ranges };
   }, [messages, collapsedSet]);
 
   // Enable mouse tracking
@@ -126,24 +135,10 @@ export function ConversationDetail({ conversation, onBack, onResume }: Conversat
     };
   }, [stdin, scrollOffset, visibleHeight, allLines]);
 
-  // Find the line range for a given message
-  const getMessageLineRange = (msgIndex: number): { start: number; end: number } => {
-    let start = -1;
-    let end = -1;
-    for (let i = 0; i < allLines.length; i++) {
-      if (allLines[i].messageIndex === msgIndex) {
-        if (start === -1) start = i;
-        end = i;
-      }
-    }
-    return { start, end };
-  };
-
   // Auto-scroll to keep selected message visible
   useEffect(() => {
-    if (allLines.length === 0) return;
-    const { start, end } = getMessageLineRange(selectedMessage);
-    if (start === -1) return;
+    if (allLines.length === 0 || !messageRanges[selectedMessage]) return;
+    const { start, end } = messageRanges[selectedMessage];
 
     // If message starts above viewport, scroll up
     if (start < scrollOffset) {
@@ -153,7 +148,7 @@ export function ConversationDetail({ conversation, onBack, onResume }: Conversat
     else if (end >= scrollOffset + visibleHeight) {
       setScrollOffset(Math.max(0, end - visibleHeight + 1));
     }
-  }, [selectedMessage, allLines.length]);
+  }, [selectedMessage, messageRanges]);
 
   const maxScroll = Math.max(0, allLines.length - visibleHeight);
 
