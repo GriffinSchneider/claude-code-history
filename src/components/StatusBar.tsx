@@ -10,9 +10,10 @@ export function StatusBar({ view, conversationName }) {
           { key: 'q', action: 'Quit' },
         ]
       : [
-          { key: '↑/↓ or j/k', action: 'Scroll' },
-          { key: 'Enter', action: 'Resume in Claude' },
-          { key: 'Esc/q', action: 'Back' },
+          { key: 'j/k', action: 'Select msg' },
+          { key: '↑/↓', action: 'Scroll' },
+          { key: 'Enter', action: 'Resume' },
+          { key: 'q', action: 'Back' },
         ];
 
   return (

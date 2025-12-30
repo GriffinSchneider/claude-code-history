@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { loadConversationMessages } from '../lib/history.js';
 import { formatUserMessage, formatAssistantMessage } from '../lib/formatter.js';
@@ -14,10 +14,17 @@ interface ConversationDetailProps {
   onResume: (sessionId: string) => void;
 }
 
+interface LineInfo {
+  text: string;
+  messageIndex: number;
+}
+
 export function ConversationDetail({ conversation, onBack, onResume }: ConversationDetailProps) {
   const [loading, setLoading] = useState(true);
   const [scrollOffset, setScrollOffset] = useState(0);
-  const [allLines, setAllLines] = useState<string[]>([]);
+  const [selectedMessage, setSelectedMessage] = useState(0);
+  const [allLines, setAllLines] = useState<LineInfo[]>([]);
+  const [messageCount, setMessageCount] = useState(0);
 
   // Calculate visible height (leave room for header and status bar)
   const visibleHeight = Math.max(5, (process.stdout.rows || 24) - 8);
@@ -26,40 +33,72 @@ export function ConversationDetail({ conversation, onBack, onResume }: Conversat
     async function load() {
       try {
         const msgs = await loadConversationMessages(conversation.filePath);
+        setMessageCount(msgs.length);
 
-        // Format all messages and split into lines
-        const lines: string[] = [];
-        for (const msg of msgs) {
+        // Format all messages and split into lines, tracking which message each line belongs to
+        const lines: LineInfo[] = [];
+        const termWidth = process.stdout.columns || 80;
+        const maxWidth = termWidth - 6; // Account for padding and selection indicator
+
+        for (let msgIdx = 0; msgIdx < msgs.length; msgIdx++) {
+          const msg = msgs[msgIdx];
           const formatted =
             msg.type === 'user' ? formatUserMessage(msg.content) : formatAssistantMessage(msg.content);
 
-          // Split formatted message into lines, wrapping long lines
-          const termWidth = process.stdout.columns || 80;
-          const maxWidth = termWidth - 4; // Account for padding
           const msgLines = formatted.split('\n');
 
           for (const line of msgLines) {
-            // Wrap long lines (simple character-based wrap)
+            // Wrap long lines
             if (line.length <= maxWidth) {
-              lines.push(line);
+              lines.push({ text: line, messageIndex: msgIdx });
             } else {
-              // Split into chunks
               for (let i = 0; i < line.length; i += maxWidth) {
-                lines.push(line.slice(i, i + maxWidth));
+                lines.push({ text: line.slice(i, i + maxWidth), messageIndex: msgIdx });
               }
             }
           }
-          lines.push(''); // Empty line between messages
+          // Empty line between messages (belongs to current message for highlighting)
+          lines.push({ text: '', messageIndex: msgIdx });
         }
 
         setAllLines(lines);
       } catch (err: any) {
-        setAllLines([`Error loading conversation: ${err.message}`]);
+        setAllLines([{ text: `Error loading conversation: ${err.message}`, messageIndex: 0 }]);
+        setMessageCount(1);
       }
       setLoading(false);
     }
     load();
   }, [conversation.filePath]);
+
+  // Find the line range for a given message
+  const getMessageLineRange = (msgIndex: number): { start: number; end: number } => {
+    let start = -1;
+    let end = -1;
+    for (let i = 0; i < allLines.length; i++) {
+      if (allLines[i].messageIndex === msgIndex) {
+        if (start === -1) start = i;
+        end = i;
+      }
+    }
+    return { start, end };
+  };
+
+  // Auto-scroll to keep selected message visible
+  useEffect(() => {
+    if (allLines.length === 0) return;
+    const { start, end } = getMessageLineRange(selectedMessage);
+    if (start === -1) return;
+
+    // If message starts above viewport, scroll up
+    if (start < scrollOffset) {
+      setScrollOffset(start);
+    }
+    // If message ends below viewport, scroll down
+    else if (end >= scrollOffset + visibleHeight) {
+      setScrollOffset(Math.max(0, end - visibleHeight + 1));
+    }
+  }, [selectedMessage, allLines.length]);
 
   const maxScroll = Math.max(0, allLines.length - visibleHeight);
 
@@ -74,11 +113,19 @@ export function ConversationDetail({ conversation, onBack, onResume }: Conversat
       return;
     }
 
-    if (key.upArrow || input === 'k') {
-      setScrollOffset((prev) => Math.max(0, prev - 1));
+    // j/k for message selection
+    if (input === 'k') {
+      setSelectedMessage((prev) => Math.max(0, prev - 1));
+    }
+    if (input === 'j') {
+      setSelectedMessage((prev) => Math.min(messageCount - 1, prev + 1));
     }
 
-    if (key.downArrow || input === 'j') {
+    // Arrow keys for scrolling
+    if (key.upArrow) {
+      setScrollOffset((prev) => Math.max(0, prev - 1));
+    }
+    if (key.downArrow) {
       setScrollOffset((prev) => Math.min(maxScroll, prev + 1));
     }
 
@@ -90,7 +137,7 @@ export function ConversationDetail({ conversation, onBack, onResume }: Conversat
       setScrollOffset((prev) => Math.min(maxScroll, prev + visibleHeight));
     }
 
-    // Home/End
+    // Ctrl+u/d for half-page
     if (key.ctrl && input === 'u') {
       setScrollOffset((prev) => Math.max(0, prev - Math.floor(visibleHeight / 2)));
     }
@@ -128,14 +175,23 @@ export function ConversationDetail({ conversation, onBack, onResume }: Conversat
       </Box>
 
       <Box flexDirection="column" height={visibleHeight} paddingX={1} overflow="hidden">
-        {visibleLines.map((line, i) => (
-          <Text key={scrollOffset + i}>{line || ' '}</Text>
-        ))}
+        {visibleLines.map((lineInfo, i) => {
+          const isSelected = lineInfo.messageIndex === selectedMessage;
+          return (
+            <Box key={scrollOffset + i}>
+              <Text color={isSelected ? 'cyan' : undefined}>
+                {isSelected ? '▌' : ' '}
+              </Text>
+              <Text inverse={isSelected}>{lineInfo.text || ' '}</Text>
+            </Box>
+          );
+        })}
       </Box>
 
       <Box paddingX={1} marginTop={1}>
         <Text dimColor>
-          Line {scrollOffset + 1}-{Math.min(scrollOffset + visibleHeight, allLines.length)} of {allLines.length}
+          Msg {selectedMessage + 1}/{messageCount} · Line {scrollOffset + 1}-
+          {Math.min(scrollOffset + visibleHeight, allLines.length)}/{allLines.length}
           {maxScroll > 0 && ` (${Math.round((scrollOffset / maxScroll) * 100)}%)`}
         </Text>
       </Box>
