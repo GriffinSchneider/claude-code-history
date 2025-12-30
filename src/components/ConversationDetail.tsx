@@ -12,8 +12,13 @@ interface ConversationDetailProps {
     projectName: string;
     summary?: string;
   };
+  /** Saved scroll/selection state to restore */
+  savedState?: { scrollOffset: number; selectedMessage: number };
   onBack: () => void;
   onResume: (sessionId: string) => void;
+  onOpenSidechain: (agentId: string, currentState: { scrollOffset: number; selectedMessage: number }) => void;
+  onSelectedAgentChange: (hasAgent: boolean) => void;
+  isInSidechain: boolean;
 }
 
 interface LineInfo {
@@ -29,13 +34,43 @@ interface MessageRange {
 // Header takes up 3 lines (border + content + margin)
 const HEADER_LINES = 3;
 
-export function ConversationDetail({ conversation, onBack, onResume }: ConversationDetailProps) {
+export function ConversationDetail({
+  conversation,
+  savedState,
+  onBack,
+  onResume,
+  onOpenSidechain,
+  onSelectedAgentChange,
+  isInSidechain,
+}: ConversationDetailProps) {
   const [loading, setLoading] = useState(true);
-  const [scrollOffset, setScrollOffset] = useState(0);
-  const [selectedMessage, setSelectedMessage] = useState(0);
+  const [scrollOffset, setScrollOffset] = useState(savedState?.scrollOffset ?? 0);
+  const [selectedMessage, setSelectedMessage] = useState(savedState?.selectedMessage ?? 0);
   const [messages, setMessages] = useState<Message[]>([]);
   const [collapsedSet, setCollapsedSet] = useState<Set<number>>(new Set());
+  const [messageAgentIds, setMessageAgentIds] = useState<Map<number, string>>(new Map());
   const { stdin } = useStdin();
+
+  // Reset or restore state when conversation changes
+  useEffect(() => {
+    if (savedState) {
+      // Restore saved position when returning to this conversation
+      setScrollOffset(savedState.scrollOffset);
+      setSelectedMessage(savedState.selectedMessage);
+    } else {
+      // Reset to top for new conversations
+      setScrollOffset(0);
+      setSelectedMessage(0);
+    }
+  }, [conversation.filePath]);
+
+  // Check if the currently selected message has an associated sidechain
+  const selectedAgentId = messageAgentIds.get(selectedMessage);
+
+  // Notify parent when selected message's agent status changes
+  useEffect(() => {
+    onSelectedAgentChange(!!selectedAgentId);
+  }, [selectedAgentId, onSelectedAgentChange]);
 
   // Calculate visible height (leave room for header and status bar)
   const visibleHeight = Math.max(5, (process.stdout.rows || 24) - 8);
@@ -44,8 +79,11 @@ export function ConversationDetail({ conversation, onBack, onResume }: Conversat
   useEffect(() => {
     async function load() {
       try {
-        const msgs = await loadConversationMessages(conversation.filePath);
+        const { messages: msgs, messageAgentIds: agentIds } = await loadConversationMessages(
+          conversation.filePath
+        );
         setMessages(msgs);
+        setMessageAgentIds(agentIds);
 
         // Initialize collapsed state - messages with only collapsible content start collapsed
         const initialCollapsed = new Set<number>();
@@ -231,6 +269,11 @@ export function ConversationDetail({ conversation, onBack, onResume }: Conversat
       const editor = process.env.EDITOR || 'vim';
       spawn(editor, [conversation.filePath], { stdio: 'inherit', shell: true });
     }
+
+    // s to open sidechain for current message (if it has one)
+    if (input === 's' && selectedAgentId) {
+      onOpenSidechain(selectedAgentId, { scrollOffset, selectedMessage });
+    }
   });
 
   if (loading) {
@@ -265,9 +308,11 @@ export function ConversationDetail({ conversation, onBack, onResume }: Conversat
       <Box flexDirection="column" height={visibleHeight} paddingX={1} overflow="hidden">
         {visibleLines.map((lineInfo, i) => {
           const isSelected = lineInfo.messageIndex === selectedMessage;
+          const hasAgent = messageAgentIds.has(lineInfo.messageIndex);
           return (
             <Box key={scrollOffset + i}>
               <Text color="cyan">{isSelected ? '▌' : ' '}</Text>
+              <Text color="magenta">{hasAgent ? '◆' : ' '}</Text>
               <Text>{lineInfo.text || ' '}</Text>
             </Box>
           );
@@ -276,11 +321,18 @@ export function ConversationDetail({ conversation, onBack, onResume }: Conversat
 
       <Box paddingX={1} marginTop={1}>
         <Text dimColor>
+          {isInSidechain && <Text color="yellow">[Sidechain] </Text>}
           Msg {selectedMessage + 1}/{messages.length}
           {isSelectedCollapsed ? ' [collapsed]' : ''}
           {' · '}Line {scrollOffset + 1}-
           {Math.min(scrollOffset + visibleHeight, allLines.length)}/{allLines.length}
           {maxScroll > 0 && ` (${Math.round((scrollOffset / maxScroll) * 100)}%)`}
+          {selectedAgentId && (
+            <Text>
+              {' · '}
+              <Text color="magenta">◆ has agent (s)</Text>
+            </Text>
+          )}
         </Text>
       </Box>
     </Box>

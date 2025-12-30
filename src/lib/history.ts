@@ -79,6 +79,7 @@ export async function loadConversations() {
 
 /**
  * Parse a single conversation JSONL file
+ * Returns null for sidechain conversations (they're accessed via parent)
  */
 async function parseConversationFile(filePath: string, fallbackProjectPath: string) {
   const content = await readFile(filePath, 'utf-8');
@@ -92,10 +93,17 @@ async function parseConversationFile(filePath: string, fallbackProjectPath: stri
   let lastUserMessage: string | null = null;
   let cwd: string | null = null;
   let messageCount = 0;
+  let isSidechain = false;
+  const agentIds: string[] = [];
 
   for (const line of lines) {
     try {
       const entry = JSON.parse(line);
+
+      // Check if this is a sidechain conversation
+      if (entry.isSidechain) {
+        isSidechain = true;
+      }
 
       // Track timestamps
       if (entry.timestamp) {
@@ -116,6 +124,11 @@ async function parseConversationFile(filePath: string, fallbackProjectPath: stri
       // Look for summary entries
       if (entry.type === 'summary' && entry.summary) {
         summary = entry.summary;
+      }
+
+      // Collect agentIds from tool results (links to sidechain conversations)
+      if (entry.toolUseResult?.agentId) {
+        agentIds.push(entry.toolUseResult.agentId);
       }
 
       // Count actual messages
@@ -140,6 +153,11 @@ async function parseConversationFile(filePath: string, fallbackProjectPath: stri
     }
   }
 
+  // Skip sidechain conversations - they're accessed via their parent
+  if (isSidechain) {
+    return null;
+  }
+
   // Extract conversation ID from filename
   const conversationId = filePath.split('/').pop()!.replace('.jsonl', '');
 
@@ -159,6 +177,7 @@ async function parseConversationFile(filePath: string, fallbackProjectPath: stri
     firstTimestamp,
     lastTimestamp,
     messageCount,
+    agentIds,
   };
 }
 
@@ -181,14 +200,72 @@ function isHiddenCommandMessage(textContent: string): boolean {
 }
 
 /**
+ * Load a sidechain conversation by agentId
+ * Searches the same project directory for agent-{agentId}.jsonl
+ */
+export async function loadSidechainConversation(parentFilePath: string, agentId: string) {
+  const projectDir = parentFilePath.split('/').slice(0, -1).join('/');
+  const sidechainPath = join(projectDir, `agent-${agentId}.jsonl`);
+
+  try {
+    const content = await readFile(sidechainPath, 'utf-8');
+    const lines = content.trim().split('\n').filter(Boolean);
+
+    // Get basic info from first entry
+    const firstEntry = JSON.parse(lines[0]);
+    const projectPath = firstEntry.cwd || '';
+    const projectName = getProjectDisplayName(projectPath);
+
+    // Count messages
+    let messageCount = 0;
+    let firstUserMessage: string | null = null;
+    for (const line of lines) {
+      try {
+        const entry = JSON.parse(line);
+        if (entry.type === 'user' || entry.type === 'assistant') {
+          messageCount++;
+          if (entry.type === 'user' && entry.message?.content && !firstUserMessage) {
+            firstUserMessage = extractTextContent(entry.message.content);
+          }
+        }
+      } catch {
+        // skip
+      }
+    }
+
+    return {
+      id: `agent-${agentId}`,
+      filePath: sidechainPath,
+      projectPath,
+      projectName: `[Agent] ${projectName}`,
+      sessionId: firstEntry.sessionId || agentId,
+      summary: firstUserMessage,
+      agentId,
+      messageCount,
+      agentIds: [], // Sidechains don't have nested sidechains (for now)
+    };
+  } catch {
+    return null;
+  }
+}
+
+export interface LoadedConversation {
+  messages: Message[];
+  /** Maps message index to agentId for messages that spawned subagents */
+  messageAgentIds: Map<number, string>;
+}
+
+/**
  * Load full messages from a conversation file
  */
-export async function loadConversationMessages(filePath: string): Promise<Message[]> {
+export async function loadConversationMessages(filePath: string): Promise<LoadedConversation> {
   const content = await readFile(filePath, 'utf-8');
   const lines = content.trim().split('\n').filter(Boolean);
 
   const messages: Message[] = [];
+  const messageAgentIds = new Map<number, string>();
   let skipNextAssistant = false;
+  let lastAssistantIndex = -1;
 
   for (const line of lines) {
     try {
@@ -197,6 +274,11 @@ export async function loadConversationMessages(filePath: string): Promise<Messag
       if (entry.type === 'user' && entry.message) {
         // Skip meta messages (e.g., Caveat messages that precede local commands)
         if (entry.isMeta) continue;
+
+        // Check for tool result with agentId - associate with last assistant message
+        if (entry.toolUseResult?.agentId && lastAssistantIndex >= 0) {
+          messageAgentIds.set(lastAssistantIndex, entry.toolUseResult.agentId);
+        }
 
         // Skip empty user messages (tool approvals, etc.)
         const textContent = extractTextContent(entry.message.content);
@@ -223,12 +305,13 @@ export async function loadConversationMessages(filePath: string): Promise<Messag
           timestamp: entry.timestamp,
           model: entry.message.model,
         });
+        lastAssistantIndex = messages.length - 1;
       }
     } catch (err) {
       // Skip malformed lines
     }
   }
 
-  return messages;
+  return { messages, messageAgentIds };
 }
 

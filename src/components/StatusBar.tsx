@@ -1,7 +1,14 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 
-export function StatusBar({ view, conversationName }) {
+interface StatusBarProps {
+  view: string;
+  conversationName?: string;
+  isInSidechain?: boolean;
+  selectedHasAgent?: boolean;
+}
+
+export function StatusBar({ view, conversationName, isInSidechain, selectedHasAgent }: StatusBarProps) {
   const keys =
     view === 'list'
       ? [
@@ -13,8 +20,9 @@ export function StatusBar({ view, conversationName }) {
           { key: 'j/k', action: 'Select' },
           { key: 'Space', action: 'Expand/Collapse' },
           { key: '↑/↓', action: 'Scroll' },
+          ...(selectedHasAgent ? [{ key: 's', action: 'Agent (◆)' }] : []),
           { key: 'Enter', action: 'Resume' },
-          { key: 'q', action: 'Back' },
+          { key: 'q', action: isInSidechain ? 'Parent' : 'Back' },
         ];
 
   return (
