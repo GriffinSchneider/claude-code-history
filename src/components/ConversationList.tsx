@@ -78,24 +78,20 @@ export function ConversationList({ conversations, onSelect, onQuit }) {
           <Box key={conv.id} flexDirection="column" marginBottom={1}>
             {/* Line 1: Metadata */}
             <Box paddingX={1}>
-              <Text
-                backgroundColor={isSelected ? 'blue' : undefined}
-                color={isSelected ? 'white' : undefined}
-              >
-                {isSelected ? '▶ ' : '  '}
-                <Text bold>{conv.projectName}</Text>
-                <Text dimColor={!isSelected}> · </Text>
-                <Text dimColor={!isSelected}>{formatTimestamp(conv.lastTimestamp)}</Text>
-                <Text dimColor={!isSelected}> · </Text>
-                <Text dimColor={!isSelected}>{conv.messageCount} msgs</Text>
+              <Text backgroundColor={isSelected ? 'blue' : undefined} color={isSelected ? 'white' : undefined}>
+                {isSelected ? '>' : ' '}
               </Text>
+              <Text> </Text>
+              <Text bold>{conv.projectName}</Text>
+              <Text dimColor> · </Text>
+              <Text dimColor>{formatTimestamp(conv.lastTimestamp)}</Text>
+              <Text dimColor> · </Text>
+              <Text dimColor>{conv.messageCount} msgs</Text>
             </Box>
             {/* Line 2: First message (summary) */}
             <Box paddingX={1}>
-              <Text
-                backgroundColor={isSelected ? 'blue' : undefined}
-                color={isSelected ? 'white' : 'gray'}
-              >
+              <Text backgroundColor={isSelected ? 'blue' : undefined}> </Text>
+              <Text color="gray">
                 {'  '}
                 {truncate(conv.summary, summaryWidth)}
               </Text>
@@ -103,11 +99,10 @@ export function ConversationList({ conversations, onSelect, onQuit }) {
             {/* Line 3: Last user message (only if different from first) */}
             {conv.lastUserMessage && conv.lastUserMessage !== conv.firstUserMessage && (
               <Box paddingX={1}>
-                <Text
-                  backgroundColor={isSelected ? 'blue' : undefined}
-                  color={isSelected ? 'white' : 'gray'}
-                >
-                  <Text dimColor={!isSelected}>→ </Text>
+                <Text backgroundColor={isSelected ? 'blue' : undefined}> </Text>
+                <Text color="gray">
+                  {'  '}
+                  <Text dimColor>→ </Text>
                   {truncate(conv.lastUserMessage, summaryWidth - 2)}
                 </Text>
               </Box>
