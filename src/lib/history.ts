@@ -51,7 +51,13 @@ export async function loadConversations() {
             const filePath = join(projectDir, file);
             const conversation = await parseConversationFile(filePath, projectPath);
             if (conversation && conversation.messageCount > 0) {
-              conversations.push(conversation);
+              // Skip warmup-only conversations (just "Warmup" + one response)
+              const isWarmupOnly =
+                conversation.firstUserMessage?.toLowerCase() === 'warmup' &&
+                conversation.messageCount <= 2;
+              if (!isWarmupOnly) {
+                conversations.push(conversation);
+              }
             }
           } catch (err) {
             // Skip malformed files
