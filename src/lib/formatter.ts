@@ -18,19 +18,6 @@ export interface Message {
 }
 
 /**
- * Check if a message has collapsible content (tool calls or thinking blocks)
- */
-export function hasCollapsibleContent(message: Message): boolean {
-  if (message.type === 'user') return false;
-  if (typeof message.content === 'string') return false;
-  if (!Array.isArray(message.content)) return false;
-
-  return message.content.some(
-    (block: any) => block.type === 'thinking' || block.type === 'tool_use'
-  );
-}
-
-/**
  * Check if a message should start collapsed by default
  * (only if it ONLY contains collapsible content, no text)
  */
@@ -51,11 +38,10 @@ export function shouldStartCollapsed(message: Message): boolean {
 /**
  * Format a user message for display
  */
-export function formatUserMessage(content: any, collapsed: boolean): string {
+function formatUserMessage(content: any, collapsed: boolean): string {
   const text = typeof content === 'string' ? content : extractTextContent(content);
   if (collapsed) {
-    const preview = text.slice(0, 60).replace(/\n/g, ' ');
-    return chalk.cyan.bold('You: ') + chalk.cyan(preview + (text.length > 60 ? '...' : ''));
+    return chalk.cyan.bold('You: ') + chalk.cyan(truncate(text, 60));
   }
   return chalk.cyan.bold('You: ') + chalk.cyan(text);
 }
@@ -63,11 +49,10 @@ export function formatUserMessage(content: any, collapsed: boolean): string {
 /**
  * Format an assistant message for display
  */
-export function formatAssistantMessage(content: any, collapsed: boolean): string {
+function formatAssistantMessage(content: any, collapsed: boolean): string {
   if (typeof content === 'string') {
     if (collapsed) {
-      const preview = content.slice(0, 60).replace(/\n/g, ' ');
-      return chalk.white(preview + (content.length > 60 ? '...' : ''));
+      return chalk.white(truncate(content, 60));
     }
     return chalk.white(marked(content).trim());
   }
@@ -77,8 +62,7 @@ export function formatAssistantMessage(content: any, collapsed: boolean): string
   for (const block of content) {
     if (block.type === 'text') {
       if (collapsed) {
-        const preview = block.text.slice(0, 60).replace(/\n/g, ' ');
-        parts.push(preview + (block.text.length > 60 ? '...' : ''));
+        parts.push(truncate(block.text, 60));
       } else {
         parts.push(marked(block.text).trim());
       }
@@ -127,13 +111,7 @@ function formatToolUseCollapsed(block: any): string {
     }
   }
 
-  // Truncate long inputs
-  const maxLen = 60;
-  if (input.length > maxLen) {
-    input = input.slice(0, maxLen) + '...';
-  }
-
-  return chalk.yellow(`[Tool: ${name}] `) + chalk.dim(input);
+  return chalk.yellow(`[Tool: ${name}] `) + chalk.dim(truncate(input, 60));
 }
 
 /**
@@ -171,7 +149,8 @@ export function formatMessage(message: Message, collapsed: boolean): string {
 /**
  * Extract text content from a content array
  */
-function extractTextContent(content: any): string {
+export function extractTextContent(content: any): string {
+  if (typeof content === 'string') return content;
   if (Array.isArray(content)) {
     return content
       .filter((b: any) => b.type === 'text')

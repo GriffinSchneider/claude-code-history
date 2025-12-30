@@ -1,7 +1,7 @@
-import { readdir, readFile, stat } from 'fs/promises';
+import { readdir, readFile } from 'fs/promises';
 import { join } from 'path';
 import { PROJECTS_DIR, decodeProjectPath, getProjectDisplayName } from '../utils/paths.js';
-import type { Message } from './formatter.js';
+import { extractTextContent, type Message } from './formatter.js';
 
 /**
  * Load all conversations from ~/.claude/projects
@@ -25,7 +25,7 @@ export async function loadConversations() {
         for (const file of jsonlFiles) {
           try {
             const filePath = join(projectDir, file);
-            const conversation = await parseConversationFile(filePath, projectPath, projectName);
+            const conversation = await parseConversationFile(filePath, projectPath);
             if (conversation && conversation.messageCount > 0) {
               conversations.push(conversation);
             }
@@ -50,7 +50,7 @@ export async function loadConversations() {
 /**
  * Parse a single conversation JSONL file
  */
-async function parseConversationFile(filePath: string, fallbackProjectPath: string, fallbackProjectName: string) {
+async function parseConversationFile(filePath: string, fallbackProjectPath: string) {
   const content = await readFile(filePath, 'utf-8');
   const lines = content.trim().split('\n').filter(Boolean);
 
@@ -160,13 +160,3 @@ export async function loadConversationMessages(filePath: string): Promise<Messag
   return messages;
 }
 
-function extractTextContent(content) {
-  if (typeof content === 'string') return content;
-  if (Array.isArray(content)) {
-    return content
-      .filter((b) => b.type === 'text')
-      .map((b) => b.text)
-      .join('\n');
-  }
-  return String(content);
-}
