@@ -6,8 +6,16 @@ export function ConversationList({ conversations, onSelect, onQuit }) {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [scrollOffset, setScrollOffset] = useState(0);
 
-  // Calculate visible height (leave room for header and status bar)
-  const visibleHeight = Math.max(5, (process.stdout.rows || 24) - 6);
+  const terminalWidth = process.stdout.columns || 80;
+  const terminalHeight = process.stdout.rows || 24;
+
+  // Each conversation takes 3 lines + 1 for spacing between items
+  const linesPerItem = 4;
+  // Leave room for header (2 lines) and status bar (2 lines)
+  const visibleItems = Math.max(3, Math.floor((terminalHeight - 4) / linesPerItem));
+
+  // Summary gets most of the width, minus indent and some padding
+  const summaryWidth = Math.max(40, terminalWidth - 6);
 
   useInput((input, key) => {
     if (input === 'q') {
@@ -25,7 +33,6 @@ export function ConversationList({ conversations, onSelect, onQuit }) {
     if (key.upArrow || input === 'k') {
       setSelectedIndex((prev) => {
         const newIndex = Math.max(0, prev - 1);
-        // Adjust scroll if needed
         if (newIndex < scrollOffset) {
           setScrollOffset(newIndex);
         }
@@ -36,9 +43,8 @@ export function ConversationList({ conversations, onSelect, onQuit }) {
     if (key.downArrow || input === 'j') {
       setSelectedIndex((prev) => {
         const newIndex = Math.min(conversations.length - 1, prev + 1);
-        // Adjust scroll if needed
-        if (newIndex >= scrollOffset + visibleHeight) {
-          setScrollOffset(newIndex - visibleHeight + 1);
+        if (newIndex >= scrollOffset + visibleItems) {
+          setScrollOffset(newIndex - visibleItems + 1);
         }
         return newIndex;
       });
@@ -53,7 +59,7 @@ export function ConversationList({ conversations, onSelect, onQuit }) {
     );
   }
 
-  const visibleConversations = conversations.slice(scrollOffset, scrollOffset + visibleHeight);
+  const visibleConversations = conversations.slice(scrollOffset, scrollOffset + visibleItems);
 
   return (
     <Box flexDirection="column" flexGrow={1}>
@@ -69,24 +75,51 @@ export function ConversationList({ conversations, onSelect, onQuit }) {
         const isSelected = actualIndex === selectedIndex;
 
         return (
-          <Box key={conv.id} paddingX={1}>
-            <Text backgroundColor={isSelected ? 'blue' : undefined} color={isSelected ? 'white' : undefined}>
-              {isSelected ? '▶ ' : '  '}
-              <Text bold>{conv.projectName}</Text>
-              <Text dimColor> · </Text>
-              <Text dimColor>{formatTimestamp(conv.lastTimestamp)}</Text>
-              <Text dimColor> · </Text>
-              <Text>{truncate(conv.summary, 50)}</Text>
-              <Text dimColor> ({conv.messageCount} msgs)</Text>
-            </Text>
+          <Box key={conv.id} flexDirection="column" marginBottom={1}>
+            {/* Line 1: Metadata */}
+            <Box paddingX={1}>
+              <Text
+                backgroundColor={isSelected ? 'blue' : undefined}
+                color={isSelected ? 'white' : undefined}
+              >
+                {isSelected ? '▶ ' : '  '}
+                <Text bold>{conv.projectName}</Text>
+                <Text dimColor={!isSelected}> · </Text>
+                <Text dimColor={!isSelected}>{formatTimestamp(conv.lastTimestamp)}</Text>
+                <Text dimColor={!isSelected}> · </Text>
+                <Text dimColor={!isSelected}>{conv.messageCount} msgs</Text>
+              </Text>
+            </Box>
+            {/* Line 2: First message (summary) */}
+            <Box paddingX={1}>
+              <Text
+                backgroundColor={isSelected ? 'blue' : undefined}
+                color={isSelected ? 'white' : 'gray'}
+              >
+                {'  '}
+                {truncate(conv.summary, summaryWidth)}
+              </Text>
+            </Box>
+            {/* Line 3: Last user message (only if different from first) */}
+            {conv.lastUserMessage && conv.lastUserMessage !== conv.firstUserMessage && (
+              <Box paddingX={1}>
+                <Text
+                  backgroundColor={isSelected ? 'blue' : undefined}
+                  color={isSelected ? 'white' : 'gray'}
+                >
+                  <Text dimColor={!isSelected}>→ </Text>
+                  {truncate(conv.lastUserMessage, summaryWidth - 2)}
+                </Text>
+              </Box>
+            )}
           </Box>
         );
       })}
 
-      {conversations.length > visibleHeight && (
-        <Box paddingX={1} marginTop={1}>
+      {conversations.length > visibleItems && (
+        <Box paddingX={1}>
           <Text dimColor>
-            Showing {scrollOffset + 1}-{Math.min(scrollOffset + visibleHeight, conversations.length)} of{' '}
+            Showing {scrollOffset + 1}-{Math.min(scrollOffset + visibleItems, conversations.length)} of{' '}
             {conversations.length}
           </Text>
         </Box>

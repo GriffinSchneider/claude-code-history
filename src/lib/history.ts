@@ -4,16 +4,27 @@ import { PROJECTS_DIR, decodeProjectPath, getProjectDisplayName } from '../utils
 import { extractTextContent, type Message } from './formatter.js';
 
 /**
- * Check if a message is system-generated (not actual user input)
+ * Extract the actual user message from text that may contain system-generated prefixes
+ * Returns null if there's no real user content
  */
-function isSystemGeneratedMessage(text: string): boolean {
-  const trimmed = text.trim();
-  return (
-    trimmed.startsWith('Caveat:') ||
-    trimmed.startsWith('<system-reminder>') ||
-    trimmed.startsWith('<command-name>') ||
-    trimmed.startsWith('<local-command-stdout>')
-  );
+function extractUserMessage(text: string): string | null {
+  let result = text;
+
+  // Strip "Caveat: ... local commands." prefix
+  const caveatMatch = result.match(/^Caveat:.*?unless the user explicitly asks you to\./s);
+  if (caveatMatch) {
+    result = result.slice(caveatMatch[0].length);
+  }
+
+  // Strip XML-like system tags and their contents
+  result = result.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '');
+  result = result.replace(/<command-name>[\s\S]*?<\/command-name>/g, '');
+  result = result.replace(/<command-message>[\s\S]*?<\/command-message>/g, '');
+  result = result.replace(/<command-args>[\s\S]*?<\/command-args>/g, '');
+  result = result.replace(/<local-command-stdout>[\s\S]*?<\/local-command-stdout>/g, '');
+
+  result = result.trim();
+  return result.length > 0 ? result : null;
 }
 
 /**
@@ -72,6 +83,7 @@ async function parseConversationFile(filePath: string, fallbackProjectPath: stri
   let sessionId: string | null = null;
   let summary: string | null = null;
   let firstUserMessage: string | null = null;
+  let lastUserMessage: string | null = null;
   let cwd: string | null = null;
   let messageCount = 0;
 
@@ -104,12 +116,16 @@ async function parseConversationFile(filePath: string, fallbackProjectPath: stri
       if (entry.type === 'user' || entry.type === 'assistant') {
         messageCount++;
 
-        // Capture first user message as fallback title
-        // Skip system-generated messages (Caveat, system-reminder, etc.)
-        if (entry.type === 'user' && !firstUserMessage && entry.message?.content) {
-          const text = extractTextContent(entry.message.content);
-          if (!isSystemGeneratedMessage(text)) {
-            firstUserMessage = text;
+        // Capture first and last user messages
+        // Strip system-generated prefixes (Caveat, system-reminder, etc.)
+        if (entry.type === 'user' && entry.message?.content) {
+          const rawText = extractTextContent(entry.message.content);
+          const cleanText = extractUserMessage(rawText);
+          if (cleanText) {
+            if (!firstUserMessage) {
+              firstUserMessage = cleanText;
+            }
+            lastUserMessage = cleanText;
           }
         }
       }
@@ -132,6 +148,8 @@ async function parseConversationFile(filePath: string, fallbackProjectPath: stri
     projectName,
     sessionId: sessionId || conversationId,
     summary: summary || firstUserMessage,
+    firstUserMessage,
+    lastUserMessage,
     firstTimestamp,
     lastTimestamp,
     messageCount,
