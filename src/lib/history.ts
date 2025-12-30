@@ -163,6 +163,24 @@ async function parseConversationFile(filePath: string, fallbackProjectPath: stri
 }
 
 /**
+ * Commands to hide from conversation details (noisy/uninteresting)
+ */
+const HIDDEN_COMMANDS = ['/release-notes', '/clear', '/new'];
+
+/**
+ * Check if a message is a hidden command or its response
+ */
+function isHiddenCommandMessage(textContent: string): boolean {
+  // Check for any hidden command
+  for (const cmd of HIDDEN_COMMANDS) {
+    if (textContent.includes(`<command-name>${cmd}</command-name>`)) return true;
+  }
+  // The release-notes response (wrapped in local-command-stdout, contains version entries)
+  if (textContent.includes('<local-command-stdout>') && textContent.includes('Version ')) return true;
+  return false;
+}
+
+/**
  * Load full messages from a conversation file
  */
 export async function loadConversationMessages(filePath: string): Promise<Message[]> {
@@ -170,15 +188,24 @@ export async function loadConversationMessages(filePath: string): Promise<Messag
   const lines = content.trim().split('\n').filter(Boolean);
 
   const messages: Message[] = [];
+  let skipNextAssistant = false;
 
   for (const line of lines) {
     try {
       const entry = JSON.parse(line);
 
       if (entry.type === 'user' && entry.message) {
+        // Skip meta messages (e.g., Caveat messages that precede local commands)
+        if (entry.isMeta) continue;
+
         // Skip empty user messages (tool approvals, etc.)
         const textContent = extractTextContent(entry.message.content);
         if (textContent.trim()) {
+          // Skip hidden commands and their responses
+          if (isHiddenCommandMessage(textContent)) {
+            skipNextAssistant = true;
+            continue;
+          }
           messages.push({
             type: 'user',
             content: entry.message.content,
@@ -186,6 +213,10 @@ export async function loadConversationMessages(filePath: string): Promise<Messag
           });
         }
       } else if (entry.type === 'assistant' && entry.message) {
+        if (skipNextAssistant) {
+          skipNextAssistant = false;
+          continue;
+        }
         messages.push({
           type: 'assistant',
           content: entry.message.content,
