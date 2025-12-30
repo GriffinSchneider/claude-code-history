@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Box, Text, useInput, useStdin } from 'ink';
 import wrapAnsi from 'wrap-ansi';
+import { spawn } from 'child_process';
 import { loadConversationMessages } from '../lib/history.js';
 import { formatMessage, shouldStartCollapsed, Message } from '../lib/formatter.js';
 
@@ -211,6 +212,12 @@ export function ConversationDetail({ conversation, onBack, onResume }: Conversat
     }
     if (key.ctrl && input === 'd') {
       setScrollOffset((prev) => Math.min(maxScroll, prev + Math.floor(visibleHeight / 2)));
+    }
+
+    // ! to open JSON file in $EDITOR
+    if (input === '!') {
+      const editor = process.env.EDITOR || 'vim';
+      spawn(editor, [conversation.filePath], { stdio: 'inherit', shell: true });
     }
   });
 
