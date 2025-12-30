@@ -257,10 +257,8 @@ export function ConversationDetail({ conversation, onBack, onResume }: Conversat
           const isSelected = lineInfo.messageIndex === selectedMessage;
           return (
             <Box key={scrollOffset + i}>
-              <Text color={isSelected ? 'cyan' : undefined}>
-                {isSelected ? '▌' : ' '}
-              </Text>
-              <Text inverse={isSelected}>{lineInfo.text || ' '}</Text>
+              <Text color="cyan">{isSelected ? '▌' : ' '}</Text>
+              <Text>{lineInfo.text || ' '}</Text>
             </Box>
           );
         })}
