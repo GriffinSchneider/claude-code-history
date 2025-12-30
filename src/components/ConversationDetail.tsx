@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Box, Text, useInput } from 'ink';
+import { Box, Text, useInput, useStdin } from 'ink';
 import { loadConversationMessages } from '../lib/history.js';
 import { formatMessage, shouldStartCollapsed, Message } from '../lib/formatter.js';
 
@@ -19,16 +19,21 @@ interface LineInfo {
   messageIndex: number;
 }
 
+// Header takes up 3 lines (border + content + margin)
+const HEADER_LINES = 3;
+
 export function ConversationDetail({ conversation, onBack, onResume }: ConversationDetailProps) {
   const [loading, setLoading] = useState(true);
   const [scrollOffset, setScrollOffset] = useState(0);
   const [selectedMessage, setSelectedMessage] = useState(0);
   const [messages, setMessages] = useState<Message[]>([]);
   const [collapsedSet, setCollapsedSet] = useState<Set<number>>(new Set());
+  const { stdin } = useStdin();
 
   // Calculate visible height (leave room for header and status bar)
   const visibleHeight = Math.max(5, (process.stdout.rows || 24) - 8);
 
+  // Load messages
   useEffect(() => {
     async function load() {
       try {
@@ -80,6 +85,50 @@ export function ConversationDetail({ conversation, onBack, onResume }: Conversat
 
     return lines;
   }, [messages, collapsedSet]);
+
+  // Enable mouse tracking
+  useEffect(() => {
+    if (!stdin) return;
+
+    // Enable SGR mouse mode (better coordinate support)
+    process.stdout.write('\x1b[?1000h'); // Enable mouse tracking
+    process.stdout.write('\x1b[?1006h'); // Enable SGR extended mode
+
+    const handleData = (data: Buffer) => {
+      const str = data.toString();
+
+      // Parse SGR mouse format: \x1b[<button;x;y[Mm]
+      const match = str.match(/\x1b\[<(\d+);(\d+);(\d+)([Mm])/);
+      if (match) {
+        const button = parseInt(match[1], 10);
+        const y = parseInt(match[3], 10);
+        const isRelease = match[4] === 'm';
+
+        // Only handle left click press (button 0)
+        if (button === 0 && !isRelease) {
+          // y is 1-indexed, convert to 0-indexed line in our content area
+          const contentY = y - 1 - HEADER_LINES;
+
+          if (contentY >= 0 && contentY < visibleHeight) {
+            const lineIndex = scrollOffset + contentY;
+            if (lineIndex < allLines.length) {
+              const clickedMsgIndex = allLines[lineIndex].messageIndex;
+              setSelectedMessage(clickedMsgIndex);
+            }
+          }
+        }
+      }
+    };
+
+    stdin.on('data', handleData);
+
+    return () => {
+      // Disable mouse tracking
+      process.stdout.write('\x1b[?1006l');
+      process.stdout.write('\x1b[?1000l');
+      stdin.off('data', handleData);
+    };
+  }, [stdin, scrollOffset, visibleHeight, allLines]);
 
   // Find the line range for a given message
   const getMessageLineRange = (msgIndex: number): { start: number; end: number } => {
