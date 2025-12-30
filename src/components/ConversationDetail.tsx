@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Box, Text, useInput, useStdin } from 'ink';
+import wrapAnsi from 'wrap-ansi';
 import { loadConversationMessages } from '../lib/history.js';
 import { formatMessage, shouldStartCollapsed, Message } from '../lib/formatter.js';
 
@@ -67,17 +68,12 @@ export function ConversationDetail({ conversation, onBack, onResume }: Conversat
       const isCollapsed = collapsedSet.has(msgIdx);
       const formatted = formatMessage(msg, isCollapsed);
 
-      const msgLines = formatted.split('\n');
+      // Use wrap-ansi for ANSI-aware line wrapping
+      const wrapped = wrapAnsi(formatted, maxWidth, { hard: true, trim: false });
+      const msgLines = wrapped.split('\n');
 
       for (const line of msgLines) {
-        // Wrap long lines
-        if (line.length <= maxWidth) {
-          lines.push({ text: line, messageIndex: msgIdx });
-        } else {
-          for (let i = 0; i < line.length; i += maxWidth) {
-            lines.push({ text: line.slice(i, i + maxWidth), messageIndex: msgIdx });
-          }
-        }
+        lines.push({ text: line, messageIndex: msgIdx });
       }
       // Empty line between messages
       lines.push({ text: '', messageIndex: msgIdx });
