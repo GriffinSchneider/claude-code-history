@@ -134,11 +134,15 @@ export async function loadConversationMessages(filePath) {
       const entry = JSON.parse(line);
 
       if (entry.type === 'user' && entry.message) {
-        messages.push({
-          type: 'user',
-          content: entry.message.content,
-          timestamp: entry.timestamp,
-        });
+        // Skip empty user messages (tool approvals, etc.)
+        const textContent = extractTextContent(entry.message.content);
+        if (textContent.trim()) {
+          messages.push({
+            type: 'user',
+            content: entry.message.content,
+            timestamp: entry.timestamp,
+          });
+        }
       } else if (entry.type === 'assistant' && entry.message) {
         messages.push({
           type: 'assistant',
