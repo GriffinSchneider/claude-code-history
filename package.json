@@ -8,6 +8,7 @@
     "claude-history": "./bin/claude-history.js"
   },
   "scripts": {
+    "build": "tsc",
     "start": "tsx src/index.tsx"
   },
   "dependencies": {
@@ -20,6 +21,7 @@
     "wrap-ansi": "^9.0.2"
   },
   "devDependencies": {
+    "typescript": "^5.9.3",
     "@types/node": "^20.0.0",
     "@types/react": "^18.2.0"
   }
