@@ -1,21 +1,33 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { formatTimestamp, truncate } from '../lib/formatter.js';
 
+// Calculate height of a conversation item (2 or 3 lines)
+const getItemHeight = (conv) => {
+  return (conv.lastUserMessage && conv.lastUserMessage !== conv.firstUserMessage) ? 3 : 2;
+};
+
 export function ConversationList({ conversations, onSelect, onQuit }) {
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const [scrollOffset, setScrollOffset] = useState(0);
+  const [scrollOffset, setScrollOffset] = useState(0); // index of first visible item
 
   const terminalWidth = process.stdout.columns || 80;
   const terminalHeight = process.stdout.rows || 24;
-
-  // Each conversation takes 2-3 lines (no spacing between items)
-  const linesPerItem = 2.5;
-  // Leave room for header (2 lines) and status bar (1 line)
-  const visibleItems = Math.max(3, Math.floor((terminalHeight - 3) / linesPerItem));
-
-  // Summary gets most of the width, minus indent and some padding
+  const availableHeight = terminalHeight - 3; // header + status bar
   const summaryWidth = Math.max(40, terminalWidth - 6);
+
+  // Find which items fit in the viewport starting from scrollOffset
+  const endIndex = useMemo(() => {
+    let usedHeight = 0;
+    let idx = scrollOffset;
+    while (idx < conversations.length) {
+      const h = getItemHeight(conversations[idx]);
+      if (usedHeight + h > availableHeight && idx > scrollOffset) break;
+      usedHeight += h;
+      idx++;
+    }
+    return idx;
+  }, [scrollOffset, conversations, availableHeight]);
 
   useInput((input, key) => {
     if (input === 'q') {
@@ -43,8 +55,19 @@ export function ConversationList({ conversations, onSelect, onQuit }) {
     if (key.downArrow || input === 'j') {
       setSelectedIndex((prev) => {
         const newIndex = Math.min(conversations.length - 1, prev + 1);
-        if (newIndex >= scrollOffset + visibleItems) {
-          setScrollOffset(newIndex - visibleItems + 1);
+        // Check if newIndex is beyond current visible range
+        if (newIndex >= endIndex) {
+          // Scroll so newIndex is the last fully visible item
+          let newOffset = scrollOffset;
+          while (newOffset < newIndex) {
+            let h = 0;
+            for (let i = newOffset; i <= newIndex; i++) {
+              h += getItemHeight(conversations[i]);
+            }
+            if (h <= availableHeight) break;
+            newOffset++;
+          }
+          setScrollOffset(newOffset);
         }
         return newIndex;
       });
@@ -59,8 +82,6 @@ export function ConversationList({ conversations, onSelect, onQuit }) {
     );
   }
 
-  const visibleConversations = conversations.slice(scrollOffset, scrollOffset + visibleItems);
-
   return (
     <Box flexDirection="column" flexGrow={1}>
       <Box paddingX={1} marginBottom={1}>
@@ -70,13 +91,11 @@ export function ConversationList({ conversations, onSelect, onQuit }) {
         <Text dimColor> ({conversations.length} conversations)</Text>
       </Box>
 
-      {visibleConversations.map((conv, i) => {
+      {conversations.slice(scrollOffset, endIndex).map((conv, i) => {
         const actualIndex = scrollOffset + i;
         const isSelected = actualIndex === selectedIndex;
-
         return (
           <Box key={conv.id} flexDirection="column">
-            {/* Line 1: Metadata */}
             <Box paddingX={1}>
               <Text backgroundColor={isSelected ? 'blue' : undefined} color={isSelected ? 'white' : undefined}>
                 {isSelected ? '>' : ' '}
@@ -88,7 +107,6 @@ export function ConversationList({ conversations, onSelect, onQuit }) {
               <Text dimColor> · </Text>
               <Text dimColor>{conv.messageCount} msgs</Text>
             </Box>
-            {/* Line 2: First message (summary) */}
             <Box paddingX={1}>
               <Text backgroundColor={isSelected ? 'blue' : undefined}> </Text>
               <Text color="gray">
@@ -96,7 +114,6 @@ export function ConversationList({ conversations, onSelect, onQuit }) {
                 {truncate(conv.summary, summaryWidth)}
               </Text>
             </Box>
-            {/* Line 3: Last user message (only if different from first) */}
             {conv.lastUserMessage && conv.lastUserMessage !== conv.firstUserMessage && (
               <Box paddingX={1}>
                 <Text backgroundColor={isSelected ? 'blue' : undefined}> </Text>
@@ -111,11 +128,10 @@ export function ConversationList({ conversations, onSelect, onQuit }) {
         );
       })}
 
-      {conversations.length > visibleItems && (
+      {endIndex < conversations.length && (
         <Box paddingX={1}>
           <Text dimColor>
-            Showing {scrollOffset + 1}-{Math.min(scrollOffset + visibleItems, conversations.length)} of{' '}
-            {conversations.length}
+            Showing {scrollOffset + 1}-{endIndex} of {conversations.length}
           </Text>
         </Box>
       )}
