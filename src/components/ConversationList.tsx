@@ -9,8 +9,8 @@ export function ConversationList({ conversations, onSelect, onQuit }) {
   const terminalWidth = process.stdout.columns || 80;
   const terminalHeight = process.stdout.rows || 24;
 
-  // Each conversation takes 2-3 lines + 1 for spacing. Use 3 as average.
-  const linesPerItem = 3;
+  // Each conversation takes 2-3 lines (no spacing between items)
+  const linesPerItem = 2.5;
   // Leave room for header (2 lines) and status bar (1 line)
   const visibleItems = Math.max(3, Math.floor((terminalHeight - 3) / linesPerItem));
 
@@ -75,7 +75,7 @@ export function ConversationList({ conversations, onSelect, onQuit }) {
         const isSelected = actualIndex === selectedIndex;
 
         return (
-          <Box key={conv.id} flexDirection="column" marginBottom={1}>
+          <Box key={conv.id} flexDirection="column">
             {/* Line 1: Metadata */}
             <Box paddingX={1}>
               <Text backgroundColor={isSelected ? 'blue' : undefined} color={isSelected ? 'white' : undefined}>
