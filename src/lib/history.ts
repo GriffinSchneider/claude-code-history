@@ -72,7 +72,7 @@ export async function loadConversations() {
   }
 
   // Sort by most recent first
-  conversations.sort((a, b) => new Date(b.lastTimestamp) - new Date(a.lastTimestamp));
+  conversations.sort((a, b) => new Date(b.lastTimestamp!).getTime() - new Date(a.lastTimestamp!).getTime());
 
   return conversations;
 }

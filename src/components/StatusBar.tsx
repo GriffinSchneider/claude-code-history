@@ -1,5 +1,5 @@
 import React from 'react';
-import { Box, Text } from 'ink';
+import { useTerminalDimensions } from '@opentui/react';
 
 interface StatusBarProps {
   view: string;
@@ -9,6 +9,7 @@ interface StatusBarProps {
 }
 
 export function StatusBar({ view, conversationName, isInSidechain, selectedHasAgent }: StatusBarProps) {
+  const { width: termWidth } = useTerminalDimensions();
   const keys =
     view === 'list'
       ? [
@@ -26,31 +27,22 @@ export function StatusBar({ view, conversationName, isInSidechain, selectedHasAg
         ];
 
   return (
-    <Box
-      borderStyle="single"
-      borderTop={true}
-      borderBottom={false}
-      borderLeft={false}
-      borderRight={false}
-      paddingX={1}
-      justifyContent="space-between"
-    >
-      <Text dimColor>
-        {keys.map((k, i) => (
-          <Text key={k.key}>
-            <Text bold color="cyan">
-              {k.key}
-            </Text>
-            <Text dimColor> {k.action}</Text>
-            {i < keys.length - 1 ? '  ' : ''}
-          </Text>
-        ))}
-      </Text>
-      {conversationName && (
-        <Text dimColor italic>
-          {conversationName}
-        </Text>
-      )}
-    </Box>
+    <box flexDirection="column" height={2}>
+      <text fg="#808080" height={1}>{'─'.repeat(Math.max(1, termWidth - 2))}</text>
+      <box paddingLeft={1} paddingRight={1} flexDirection="row" justifyContent="space-between">
+        <text fg="#808080">
+          {keys.map((k, i) => (
+            <span key={k.key}>
+              <span fg="#00ffff"><b>{k.key}</b></span>
+              <span> {k.action}</span>
+              {i < keys.length - 1 ? '  ' : ''}
+            </span>
+          ))}
+        </text>
+        {conversationName && (
+          <text fg="#808080"><i>{conversationName}</i></text>
+        )}
+      </box>
+    </box>
   );
 }

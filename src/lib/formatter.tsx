@@ -1,14 +1,4 @@
-import chalk from 'chalk';
-import { marked } from 'marked';
-import TerminalRenderer from 'marked-terminal';
-
-// Configure marked with terminal renderer
-marked.setOptions({
-  renderer: new TerminalRenderer({
-    reflowText: true,
-    width: process.stdout.columns - 4 || 80,
-  }),
-});
+import React from 'react';
 
 export interface Message {
   type: 'user' | 'assistant';
@@ -38,60 +28,80 @@ export function shouldStartCollapsed(message: Message): boolean {
 /**
  * Format a user message for display
  */
-function formatUserMessage(content: any, collapsed: boolean): string {
+function formatUserMessage(content: any, collapsed: boolean): React.ReactNode {
   const text = typeof content === 'string' ? content : extractTextContent(content);
   if (collapsed) {
-    return chalk.cyan.bold('You: ') + chalk.cyan(truncate(text, 60));
+    return (
+      <text>
+        <span fg="#00ffff"><b>You: </b></span>
+        <span fg="#00ffff">{truncate(text, 60)}</span>
+      </text>
+    );
   }
-  return chalk.cyan.bold('You: ') + chalk.cyan(text);
+  return (
+    <text>
+      <span fg="#00ffff"><b>You: </b></span>
+      <span fg="#00ffff">{text}</span>
+    </text>
+  );
 }
 
 /**
  * Format an assistant message for display
  */
-function formatAssistantMessage(content: any, collapsed: boolean): string {
+function formatAssistantMessage(content: any, collapsed: boolean): React.ReactNode {
   if (typeof content === 'string') {
     if (collapsed) {
-      return chalk.white(truncate(content, 60));
+      return <text>{truncate(content, 60)}</text>;
     }
-    return chalk.white(marked(content).trim());
+    // Punting on markdown for now - just render as plain text
+    return <text>{content}</text>;
   }
 
   // Handle array of content blocks
-  const parts: string[] = [];
-  for (const block of content) {
+  const parts: React.ReactNode[] = [];
+  for (let i = 0; i < content.length; i++) {
+    const block = content[i];
     if (block.type === 'text') {
       if (collapsed) {
-        parts.push(truncate(block.text, 60));
+        parts.push(<text key={i}>{truncate(block.text, 60)}</text>);
       } else {
-        parts.push(marked(block.text).trim());
+        // Punting on markdown - just render plain text
+        parts.push(<text key={i}>{block.text}</text>);
       }
     } else if (block.type === 'thinking') {
       if (collapsed) {
-        parts.push(chalk.dim.italic('[Thinking...]'));
+        parts.push(
+          <text key={i} fg="#808080">
+            <i>[Thinking...]</i>
+          </text>
+        );
       } else {
-        parts.push(chalk.dim.italic('--- Thinking ---'));
-        parts.push(chalk.dim(block.thinking));
-        parts.push(chalk.dim.italic('--- End Thinking ---'));
+        parts.push(
+          <box key={i} flexDirection="column">
+            <text fg="#808080"><i>--- Thinking ---</i></text>
+            <text fg="#808080">{block.thinking}</text>
+            <text fg="#808080"><i>--- End Thinking ---</i></text>
+          </box>
+        );
       }
     } else if (block.type === 'tool_use') {
       if (collapsed) {
-        parts.push(formatToolUseCollapsed(block));
+        parts.push(<React.Fragment key={i}>{formatToolUseCollapsed(block)}</React.Fragment>);
       } else {
-        parts.push(formatToolUseExpanded(block));
+        parts.push(<React.Fragment key={i}>{formatToolUseExpanded(block)}</React.Fragment>);
       }
-    } else if (block.type === 'tool_result') {
-      // Skip tool results
     }
+    // Skip tool_result blocks
   }
 
-  return parts.join('\n');
+  return <box flexDirection="column">{parts}</box>;
 }
 
 /**
  * Format a tool_use block as collapsed (abbreviated)
  */
-function formatToolUseCollapsed(block: any): string {
+function formatToolUseCollapsed(block: any): React.ReactNode {
   const name = block.name || 'unknown';
   let input = '';
 
@@ -111,34 +121,38 @@ function formatToolUseCollapsed(block: any): string {
     }
   }
 
-  return chalk.yellow(`[Tool: ${name}] `) + chalk.dim(truncate(input, 60));
+  return (
+    <text>
+      <span fg="#ffff00">[Tool: {name}] </span>
+      <span fg="#808080">{truncate(input, 60)}</span>
+    </text>
+  );
 }
 
 /**
  * Format a tool_use block as expanded (full details)
  */
-function formatToolUseExpanded(block: any): string {
+function formatToolUseExpanded(block: any): React.ReactNode {
   const name = block.name || 'unknown';
-  const lines: string[] = [];
-
-  lines.push(chalk.yellow.bold(`--- Tool: ${name} ---`));
-
-  if (block.input) {
-    const inputStr = typeof block.input === 'string'
+  const inputStr = block.input
+    ? typeof block.input === 'string'
       ? block.input
-      : JSON.stringify(block.input, null, 2);
-    lines.push(chalk.dim(inputStr));
-  }
+      : JSON.stringify(block.input, null, 2)
+    : '';
 
-  lines.push(chalk.yellow.bold(`--- End Tool ---`));
-
-  return lines.join('\n');
+  return (
+    <box flexDirection="column">
+      <text fg="#ffff00"><b>--- Tool: {name} ---</b></text>
+      <text fg="#808080">{inputStr}</text>
+      <text fg="#ffff00"><b>--- End Tool ---</b></text>
+    </box>
+  );
 }
 
 /**
- * Format a message with collapsed state
+ * Format a message with collapsed state - returns a React element
  */
-export function formatMessage(message: Message, collapsed: boolean): string {
+export function formatMessage(message: Message, collapsed: boolean): React.ReactNode {
   if (message.type === 'user') {
     return formatUserMessage(message.content, collapsed);
   } else {

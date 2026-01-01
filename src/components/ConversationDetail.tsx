@@ -1,38 +1,79 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { Box, Text, useInput, useStdin } from 'ink';
-import wrapAnsi from 'wrap-ansi';
+import { useState, useEffect, useCallback } from 'react';
+import type { KeyEvent } from '@opentui/core';
+import { useTerminalDimensions } from '@opentui/react';
 import { spawn } from 'child_process';
 import { loadConversationMessages } from '../lib/history.js';
-import { formatMessage, shouldStartCollapsed, Message } from '../lib/formatter.js';
+import { formatMessage, shouldStartCollapsed, Message, extractTextContent } from '../lib/formatter.js';
+import { useSelectableList } from '../hooks/useSelectableList.js';
+
+/**
+ * Estimate how many terminal lines a piece of text will take when wrapped
+ */
+function estimateWrappedLines(text: string, width: number): number {
+  if (!text || width <= 0) return 1;
+  let lines = 0;
+  for (const line of text.split('\n')) {
+    lines += Math.max(1, Math.ceil(line.length / width));
+  }
+  return lines;
+}
+
+/**
+ * Estimate the height (in terminal lines) of a message
+ */
+function getMessageHeight(msg: Message, isCollapsed: boolean, contentWidth: number): number {
+  if (isCollapsed) {
+    // Collapsed messages are always 1 line (truncated) + 1 margin
+    return 2;
+  }
+
+  if (msg.type === 'user') {
+    const text = typeof msg.content === 'string' ? msg.content : extractTextContent(msg.content);
+    // "You: " prefix + wrapped text + 1 margin
+    return estimateWrappedLines(text, contentWidth - 5) + 1;
+  }
+
+  // Assistant message - count all content blocks
+  if (typeof msg.content === 'string') {
+    return estimateWrappedLines(msg.content, contentWidth) + 1;
+  }
+
+  let height = 0;
+  for (const block of msg.content) {
+    if (block.type === 'text') {
+      height += estimateWrappedLines(block.text || '', contentWidth);
+    } else if (block.type === 'thinking') {
+      // Header + content + footer
+      height += 2 + estimateWrappedLines(block.thinking || '', contentWidth);
+    } else if (block.type === 'tool_use') {
+      const inputStr = block.input
+        ? typeof block.input === 'string'
+          ? block.input
+          : JSON.stringify(block.input, null, 2)
+        : '';
+      // Header + content + footer
+      height += 2 + estimateWrappedLines(inputStr, contentWidth);
+    }
+  }
+  return Math.max(1, height) + 1; // +1 for margin
+}
 
 interface ConversationDetailProps {
   conversation: {
     filePath: string;
     sessionId: string;
     projectName: string;
-    summary?: string;
+    summary?: string | null;
   };
   /** Saved scroll/selection state to restore */
-  savedState?: { scrollOffset: number; selectedMessage: number };
+  savedState?: { scrollY: number; selectedMessage: number };
   onBack: () => void;
   onResume: (sessionId: string) => void;
-  onOpenSidechain: (agentId: string, currentState: { scrollOffset: number; selectedMessage: number }) => void;
+  onOpenSidechain: (agentId: string, currentState: { scrollY: number; selectedMessage: number }) => void;
   onSelectedAgentChange: (hasAgent: boolean) => void;
   isInSidechain: boolean;
 }
 
-interface LineInfo {
-  text: string;
-  messageIndex: number;
-}
-
-interface MessageRange {
-  start: number;
-  end: number;
-}
-
-// Header takes up 3 lines (border + content + margin)
-const HEADER_LINES = 3;
 
 export function ConversationDetail({
   conversation,
@@ -43,26 +84,94 @@ export function ConversationDetail({
   onSelectedAgentChange,
   isInSidechain,
 }: ConversationDetailProps) {
+  const { width: termWidth, height: termHeight } = useTerminalDimensions();
   const [loading, setLoading] = useState(true);
-  const [scrollOffset, setScrollOffset] = useState(savedState?.scrollOffset ?? 0);
-  const [selectedMessage, setSelectedMessage] = useState(savedState?.selectedMessage ?? 0);
   const [messages, setMessages] = useState<Message[]>([]);
   const [collapsedSet, setCollapsedSet] = useState<Set<number>>(new Set());
   const [messageAgentIds, setMessageAgentIds] = useState<Map<number, string>>(new Map());
-  const { stdin } = useStdin();
+
+  // Available height for messages (subtract header, divider, status bar)
+  const availableHeight = termHeight - 3;
+  // Content width (subtract padding and selection indicators)
+  const contentWidth = termWidth - 6;
+
+  // Helper to get height of a specific message
+  const getMsgHeight = useCallback(
+    (idx: number) => getMessageHeight(messages[idx], collapsedSet.has(idx), contentWidth),
+    [messages, collapsedSet, contentWidth]
+  );
+
+  const toggleCollapsed = useCallback((msgIndex: number) => {
+    setCollapsedSet((prev) => {
+      const next = new Set(prev);
+      if (next.has(msgIndex)) {
+        next.delete(msgIndex);
+      } else {
+        next.add(msgIndex);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleKey = useCallback((key: KeyEvent, { selectedIndex, scrollY }: { selectedIndex: number; scrollY: number }): boolean => {
+    if (key.name === 'q' || key.name === 'escape') {
+      onBack();
+      return true;
+    }
+
+    if (key.name === 'return') {
+      onResume(conversation.sessionId);
+      return true;
+    }
+
+    // Spacebar toggles collapsed state
+    if (key.name === 'space') {
+      toggleCollapsed(selectedIndex);
+      return true;
+    }
+
+    // ! to open JSON file in $EDITOR
+    if (key.shift && key.name === '1') {
+      const editor = process.env.EDITOR || 'vim';
+      spawn(editor, [conversation.filePath], { stdio: 'inherit', shell: true });
+      return true;
+    }
+
+    // s to open sidechain for current message (if it has one)
+    const agentId = messageAgentIds.get(selectedIndex);
+    if (key.name === 's' && agentId) {
+      onOpenSidechain(agentId, { scrollY, selectedMessage: selectedIndex });
+      return true;
+    }
+
+    return false;
+  }, [onBack, onResume, conversation.sessionId, conversation.filePath, toggleCollapsed, messageAgentIds, onOpenSidechain]);
+
+  const {
+    selectedIndex: selectedMessage,
+    scrollY,
+    totalHeight,
+    setSelectedIndex: setSelectedMessage,
+    setScrollY,
+  } = useSelectableList({
+    itemCount: messages.length,
+    getItemHeight: getMsgHeight,
+    viewportHeight: availableHeight,
+    initialSelected: savedState?.selectedMessage ?? 0,
+    initialScrollY: savedState?.scrollY ?? 0,
+    onKey: handleKey,
+  });
 
   // Reset or restore state when conversation changes
   useEffect(() => {
     if (savedState) {
-      // Restore saved position when returning to this conversation
-      setScrollOffset(savedState.scrollOffset);
+      setScrollY(savedState.scrollY);
       setSelectedMessage(savedState.selectedMessage);
     } else {
-      // Reset to top for new conversations
-      setScrollOffset(0);
+      setScrollY(0);
       setSelectedMessage(0);
     }
-  }, [conversation.filePath]);
+  }, [conversation.filePath, savedState, setScrollY, setSelectedMessage]);
 
   // Check if the currently selected message has an associated sidechain
   const selectedAgentId = messageAgentIds.get(selectedMessage);
@@ -71,9 +180,6 @@ export function ConversationDetail({
   useEffect(() => {
     onSelectedAgentChange(!!selectedAgentId);
   }, [selectedAgentId, onSelectedAgentChange]);
-
-  // Calculate visible height (leave room for header and status bar)
-  const visibleHeight = Math.max(5, (process.stdout.rows || 24) - 8);
 
   // Load messages
   useEffect(() => {
@@ -101,240 +207,71 @@ export function ConversationDetail({
     load();
   }, [conversation.filePath]);
 
-  // Compute lines from messages based on collapsed state
-  // Also pre-compute message ranges for O(1) lookup
-  const { allLines, messageRanges } = useMemo(() => {
-    const lines: LineInfo[] = [];
-    const ranges: MessageRange[] = [];
-    const termWidth = process.stdout.columns || 80;
-    const maxWidth = termWidth - 6; // Account for padding and selection indicator
-
-    for (let msgIdx = 0; msgIdx < messages.length; msgIdx++) {
-      const msg = messages[msgIdx];
-      const isCollapsed = collapsedSet.has(msgIdx);
-      const formatted = formatMessage(msg, isCollapsed);
-
-      // Use wrap-ansi for ANSI-aware line wrapping
-      const wrapped = wrapAnsi(formatted, maxWidth, { hard: true, trim: false });
-      const msgLines = wrapped.split('\n');
-
-      const start = lines.length;
-      for (const line of msgLines) {
-        lines.push({ text: line, messageIndex: msgIdx });
-      }
-      // Empty line between messages
-      lines.push({ text: '', messageIndex: msgIdx });
-      ranges.push({ start, end: lines.length - 1 });
-    }
-
-    return { allLines: lines, messageRanges: ranges };
-  }, [messages, collapsedSet]);
-
-  // Enable mouse tracking
-  useEffect(() => {
-    if (!stdin) return;
-
-    // Enable SGR mouse mode (better coordinate support)
-    process.stdout.write('\x1b[?1000h'); // Enable mouse tracking
-    process.stdout.write('\x1b[?1006h'); // Enable SGR extended mode
-
-    const handleData = (data: Buffer) => {
-      const str = data.toString();
-
-      // Parse SGR mouse format: \x1b[<button;x;y[Mm]
-      const match = str.match(/\x1b\[<(\d+);(\d+);(\d+)([Mm])/);
-      if (match) {
-        const button = parseInt(match[1], 10);
-        const y = parseInt(match[3], 10);
-        const isRelease = match[4] === 'm';
-
-        // Only handle left click press (button 0)
-        if (button === 0 && !isRelease) {
-          // y is 1-indexed, convert to 0-indexed line in our content area
-          const contentY = y - 1 - HEADER_LINES;
-
-          if (contentY >= 0 && contentY < visibleHeight) {
-            const lineIndex = scrollOffset + contentY;
-            if (lineIndex < allLines.length) {
-              const clickedMsgIndex = allLines[lineIndex].messageIndex;
-              setSelectedMessage(clickedMsgIndex);
-            }
-          }
-        }
-      }
-    };
-
-    stdin.on('data', handleData);
-
-    return () => {
-      // Disable mouse tracking
-      process.stdout.write('\x1b[?1006l');
-      process.stdout.write('\x1b[?1000l');
-      stdin.off('data', handleData);
-    };
-  }, [stdin, scrollOffset, visibleHeight, allLines]);
-
-  // Auto-scroll to keep selected message visible
-  useEffect(() => {
-    if (allLines.length === 0 || !messageRanges[selectedMessage]) return;
-    const { start, end } = messageRanges[selectedMessage];
-
-    // If message starts above viewport, scroll up
-    if (start < scrollOffset) {
-      setScrollOffset(start);
-    }
-    // If message ends below viewport, scroll down
-    else if (end >= scrollOffset + visibleHeight) {
-      setScrollOffset(Math.max(0, end - visibleHeight + 1));
-    }
-  }, [selectedMessage, messageRanges]);
-
-  const maxScroll = Math.max(0, allLines.length - visibleHeight);
-
-  const toggleCollapsed = (msgIndex: number) => {
-    setCollapsedSet((prev) => {
-      const next = new Set(prev);
-      if (next.has(msgIndex)) {
-        next.delete(msgIndex);
-      } else {
-        next.add(msgIndex);
-      }
-      return next;
-    });
-  };
-
-  useInput((input, key) => {
-    if (input === 'q' || key.escape) {
-      onBack();
-      return;
-    }
-
-    if (key.return) {
-      onResume(conversation.sessionId);
-      return;
-    }
-
-    // Spacebar toggles collapsed state
-    if (input === ' ') {
-      toggleCollapsed(selectedMessage);
-      return;
-    }
-
-    // j/k for message selection
-    if (input === 'k') {
-      setSelectedMessage((prev) => Math.max(0, prev - 1));
-    }
-    if (input === 'j') {
-      setSelectedMessage((prev) => Math.min(messages.length - 1, prev + 1));
-    }
-
-    // Arrow keys for scrolling
-    if (key.upArrow) {
-      setScrollOffset((prev) => Math.max(0, prev - 1));
-    }
-    if (key.downArrow) {
-      setScrollOffset((prev) => Math.min(maxScroll, prev + 1));
-    }
-
-    // Page up/down
-    if (key.pageUp) {
-      setScrollOffset((prev) => Math.max(0, prev - visibleHeight));
-    }
-    if (key.pageDown) {
-      setScrollOffset((prev) => Math.min(maxScroll, prev + visibleHeight));
-    }
-
-    // Ctrl+u/d for half-page (also moves selection to middle of viewport)
-    if (key.ctrl && input === 'u') {
-      const halfPage = Math.floor(visibleHeight / 2);
-      const newOffset = Math.max(0, scrollOffset - halfPage);
-      setScrollOffset(newOffset);
-      const middleLine = Math.min(newOffset + halfPage, allLines.length - 1);
-      if (allLines[middleLine]) {
-        setSelectedMessage(allLines[middleLine].messageIndex);
-      }
-    }
-    if (key.ctrl && input === 'd') {
-      const halfPage = Math.floor(visibleHeight / 2);
-      const newOffset = Math.min(maxScroll, scrollOffset + halfPage);
-      setScrollOffset(newOffset);
-      const middleLine = Math.min(newOffset + halfPage, allLines.length - 1);
-      if (allLines[middleLine]) {
-        setSelectedMessage(allLines[middleLine].messageIndex);
-      }
-    }
-
-    // ! to open JSON file in $EDITOR
-    if (input === '!') {
-      const editor = process.env.EDITOR || 'vim';
-      spawn(editor, [conversation.filePath], { stdio: 'inherit', shell: true });
-    }
-
-    // s to open sidechain for current message (if it has one)
-    if (input === 's' && selectedAgentId) {
-      onOpenSidechain(selectedAgentId, { scrollOffset, selectedMessage });
-    }
-  });
+  const maxScrollY = Math.max(0, totalHeight - availableHeight);
 
   if (loading) {
     return (
-      <Box flexDirection="column" padding={1}>
-        <Text>Loading conversation...</Text>
-      </Box>
+      <box flexDirection="column" flexGrow={1}>
+        <box paddingLeft={1} paddingRight={1} flexDirection="row">
+          <text>Loading conversation...</text>
+        </box>
+      </box>
     );
   }
 
-  const visibleLines = allLines.slice(scrollOffset, scrollOffset + visibleHeight);
   const isSelectedCollapsed = collapsedSet.has(selectedMessage);
 
   return (
-    <Box flexDirection="column" flexGrow={1}>
-      <Box
-        paddingX={1}
-        marginBottom={1}
-        borderStyle="single"
-        borderBottom={true}
-        borderTop={false}
-        borderLeft={false}
-        borderRight={false}
-      >
-        <Text bold color="green">
-          {conversation.projectName}
-        </Text>
-        <Text dimColor> · </Text>
-        <Text dimColor>{conversation.summary ? conversation.summary.slice(0, 60) : 'Conversation'}</Text>
-      </Box>
+    <box flexDirection="column" flexGrow={1}>
+      <box paddingLeft={1} paddingRight={1} marginTop={0} flexDirection="row" height={1}>
+        <text>
+          <span fg="#00ff00"><b>{conversation.projectName}</b></span>
+          <span fg="#808080"> · </span>
+          <span fg="#808080">{conversation.summary ? conversation.summary.slice(0, 60) : 'Conversation'}</span>
+        </text>
+      </box>
+      <box paddingLeft={1} paddingRight={1} flexDirection="row" height={1}>
+        <text fg="#808080">{'─'.repeat(Math.max(1, termWidth - 4))}</text>
+      </box>
 
-      <Box flexDirection="column" height={visibleHeight} paddingX={1} overflow="hidden">
-        {visibleLines.map((lineInfo, i) => {
-          const isSelected = lineInfo.messageIndex === selectedMessage;
-          const hasAgent = messageAgentIds.has(lineInfo.messageIndex);
-          return (
-            <Box key={scrollOffset + i}>
-              <Text color="cyan">{isSelected ? '▌' : ' '}</Text>
-              <Text color="magenta">{hasAgent ? '◆' : ' '}</Text>
-              <Text>{lineInfo.text || ' '}</Text>
-            </Box>
-          );
-        })}
-      </Box>
+      <box flexDirection="column" flexGrow={1} overflow='hidden'>
+        <box flexDirection="column" marginTop={-scrollY}>
+          {messages.map((msg, i) => {
+            const isSelected = i === selectedMessage;
+            const hasAgent = messageAgentIds.has(i);
+            const isCollapsed = collapsedSet.has(i);
+            const msgHeight = getMsgHeight(i);
+            return (
+              <box key={i} height={msgHeight} flexDirection="column">
+                <box flexDirection="row" flexGrow={1}>
+                  <text bg={isSelected ? '#0000ff' : undefined} fg={isSelected ? '#ffffff' : undefined}>
+                    {isSelected ? '>' : ' '}
+                  </text>
+                  <text fg="#ff00ff">{hasAgent ? '◆' : ' '}</text>
+                  <box flexDirection="column" flexGrow={1}>
+                    {formatMessage(msg, isCollapsed)}
+                  </box>
+                </box>
+              </box>
+            );
+          })}
+        </box>
+      </box>
 
-      <Box paddingX={1} marginTop={1}>
-        <Text dimColor>
-          {isInSidechain && <Text color="yellow">[Sidechain] </Text>}
+      <box height={1}>
+        <text fg="#808080">
+          {isInSidechain && <span fg="#ffff00">[Sidechain] </span>}
           Msg {selectedMessage + 1}/{messages.length}
           {isSelectedCollapsed ? ' [collapsed]' : ''}
-          {' · '}Line {scrollOffset + 1}-
-          {Math.min(scrollOffset + visibleHeight, allLines.length)}/{allLines.length}
-          {maxScroll > 0 && ` (${Math.round((scrollOffset / maxScroll) * 100)}%)`}
+          {maxScrollY > 0 && ` (${Math.round((scrollY / maxScrollY) * 100)}%)`}
           {selectedAgentId && (
-            <Text>
+            <span>
               {' · '}
-              <Text color="magenta">◆ has agent (s)</Text>
-            </Text>
+              <span fg="#ff00ff">◆ has agent (s)</span>
+            </span>
           )}
-        </Text>
-      </Box>
-    </Box>
+        </text>
+      </box>
+    </box>
   );
 }

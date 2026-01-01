@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Box, Text, useApp } from 'ink';
+import { useState, useEffect } from 'react';
+import { useTerminalDimensions } from '@opentui/react';
 import { loadConversations, loadSidechainConversation } from '../lib/history.js';
 import { ConversationList } from './ConversationList.js';
 import { ConversationDetail } from './ConversationDetail.js';
@@ -7,17 +7,33 @@ import { StatusBar } from './StatusBar.js';
 
 interface AppProps {
   onResume?: (sessionId: string) => void;
+  onQuit?: () => void;
+}
+
+interface Conversation {
+  id: string;
+  filePath: string;
+  projectPath: string;
+  projectName: string;
+  sessionId: string;
+  summary: string | null;
+  firstUserMessage: string | null;
+  lastUserMessage: string | null;
+  firstTimestamp: string | null;
+  lastTimestamp: string | null;
+  messageCount: number;
+  agentIds: string[];
 }
 
 interface StackEntry {
-  conversation: any;
-  savedState?: { scrollOffset: number; selectedMessage: number };
+  conversation: Conversation;
+  savedState?: { scrollY: number; selectedMessage: number };
 }
 
-export function App({ onResume }: AppProps) {
-  const { exit } = useApp();
+export function App({ onResume, onQuit }: AppProps) {
+  const { height } = useTerminalDimensions();
   const [view, setView] = useState('list'); // 'list' or 'detail'
-  const [conversations, setConversations] = useState([]);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
   // Stack of conversations - allows navigating into sidechains and back
   const [conversationStack, setConversationStack] = useState<StackEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -29,13 +45,13 @@ export function App({ onResume }: AppProps) {
   useEffect(() => {
     async function load() {
       const convos = await loadConversations();
-      setConversations(convos);
+      setConversations(convos as Conversation[]);
       setLoading(false);
     }
     load();
   }, []);
 
-  const handleSelect = (conversation) => {
+  const handleSelect = (conversation: Conversation) => {
     setConversationStack([{ conversation }]);
     setView('detail');
   };
@@ -52,7 +68,7 @@ export function App({ onResume }: AppProps) {
 
   const handleOpenSidechain = async (
     agentId: string,
-    currentState: { scrollOffset: number; selectedMessage: number }
+    currentState: { scrollY: number; selectedMessage: number }
   ) => {
     if (!selectedConversation) return;
     const sidechain = await loadSidechainConversation(selectedConversation.filePath, agentId);
@@ -61,7 +77,7 @@ export function App({ onResume }: AppProps) {
         // Save the current state on the parent entry before pushing
         const updated = [...prev];
         updated[updated.length - 1] = { ...updated[updated.length - 1], savedState: currentState };
-        return [...updated, { conversation: sidechain }];
+        return [...updated, { conversation: sidechain as unknown as Conversation }];
       });
     }
   };
@@ -69,30 +85,32 @@ export function App({ onResume }: AppProps) {
   const handleResume = (sessionId: string) => {
     // Signal to outer scope that we want to resume this session
     onResume?.(sessionId);
-    // Exit Ink - cleanup and spawn happens after waitUntilExit() resolves
-    exit();
   };
 
   const handleQuit = () => {
-    exit();
+    onQuit?.();
   };
 
   if (loading) {
     return (
-      <Box flexDirection="column" padding={1}>
-        <Text>Loading conversations from ~/.claude/projects...</Text>
-      </Box>
+      <box flexDirection="column" height={height}>
+        <box flexGrow={1} flexDirection="column" overflow="hidden">
+          <box paddingLeft={1} paddingRight={1} flexDirection="row">
+            <text>Loading conversations from ~/.claude/projects...</text>
+          </box>
+        </box>
+      </box>
     );
   }
 
   return (
-    <Box flexDirection="column" height={process.stdout.rows || 24}>
-      <Box flexGrow={1} flexDirection="column">
+    <box flexDirection="column" height={height}>
+      <box flexGrow={1} flexDirection="column" overflow="hidden">
         {view === 'list' ? (
-          <ConversationList conversations={conversations} onSelect={handleSelect} onQuit={handleQuit} />
+          <ConversationList conversations={conversations as any} onSelect={handleSelect as any} onQuit={handleQuit} />
         ) : (
           <ConversationDetail
-            conversation={selectedConversation}
+            conversation={selectedConversation!}
             savedState={currentEntry?.savedState}
             onBack={handleBack}
             onResume={handleResume}
@@ -101,13 +119,13 @@ export function App({ onResume }: AppProps) {
             isInSidechain={conversationStack.length > 1}
           />
         )}
-      </Box>
+      </box>
       <StatusBar
         view={view}
         conversationName={selectedConversation?.projectName}
         isInSidechain={conversationStack.length > 1}
         selectedHasAgent={selectedHasAgent}
       />
-    </Box>
+    </box>
   );
 }
