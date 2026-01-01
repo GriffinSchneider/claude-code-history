@@ -7,17 +7,17 @@ export interface Message {
   model?: string;
 }
 
-/**
- * A group of messages: user message → intermediate responses → final text response
- */
-export interface MessageGroup {
-  userIndex: number;
-  userMessage: Message;
-  /** Intermediate messages (tool-only, thinking-only assistant messages) */
-  intermediates: { index: number; message: Message }[];
-  /** Final assistant message with text content (may not exist if conversation is in progress) */
-  final?: { index: number; message: Message };
+export interface IndexedMessage {
+  index: number;
+  message: Message;
 }
+
+/**
+ * A group of messages that are displayed together.
+ * Single-message groups render at top level.
+ * Multi-message groups render as collapsible.
+ */
+export type MessageGroup = IndexedMessage[];
 
 /**
  * Check if an assistant message has substantive text content (not just tool use/thinking)
@@ -30,62 +30,55 @@ export function hasTextContent(message: Message): boolean {
 }
 
 /**
- * Group messages into user → intermediates → final structure
- * Groups are only finalized when we see the next user message, not when we see text content.
+ * Group messages for display:
+ * - User messages → solo groups
+ * - Assistant "working" chain (tool→text→tool→text...) → grouped up through the last tool
+ * - Final assistant texts (after last tool) → each gets solo group
  */
 export function groupMessages(messages: Message[]): MessageGroup[] {
   const groups: MessageGroup[] = [];
-  let currentGroup: MessageGroup | null = null;
+  let assistantRun: IndexedMessage[] = [];
+
+  const flushAssistantRun = () => {
+    if (assistantRun.length === 0) return;
+
+    // Find the last tool-only message (no text content)
+    let lastToolIdx = -1;
+    for (let i = 0; i < assistantRun.length; i++) {
+      if (!hasTextContent(assistantRun[i].message)) {
+        lastToolIdx = i;
+      }
+    }
+
+    if (lastToolIdx >= 0) {
+      // Group everything up to and including the last tool
+      groups.push(assistantRun.slice(0, lastToolIdx + 1));
+      // Each message after the last tool is solo
+      for (let i = lastToolIdx + 1; i < assistantRun.length; i++) {
+        groups.push([assistantRun[i]]);
+      }
+    } else {
+      // No tools - each message is solo
+      for (const msg of assistantRun) {
+        groups.push([msg]);
+      }
+    }
+
+    assistantRun = [];
+  };
 
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
 
     if (msg.type === 'user') {
-      // Finalize and push any existing group
-      if (currentGroup) {
-        groups.push(currentGroup);
-      }
-      // Start a new group
-      currentGroup = {
-        userIndex: i,
-        userMessage: msg,
-        intermediates: [],
-      };
+      flushAssistantRun();
+      groups.push([{ index: i, message: msg }]);
     } else if (msg.type === 'assistant') {
-      if (!currentGroup) {
-        // Orphan assistant message - create a synthetic group
-        currentGroup = {
-          userIndex: -1,
-          userMessage: msg,
-          intermediates: [],
-        };
-        // If it has text, it's already the "final" (userMessage serves as display)
-        // If not, it'll be updated below
-        if (hasTextContent(msg)) {
-          continue; // userMessage already set, move on
-        }
-      }
-
-      // Add to current group
-      if (hasTextContent(msg)) {
-        // This becomes the final message (or updates it if we see another with text)
-        // Move any previous final to intermediates
-        if (currentGroup.final) {
-          currentGroup.intermediates.push(currentGroup.final);
-        }
-        currentGroup.final = { index: i, message: msg };
-      } else {
-        // Intermediate message (tool use, thinking only)
-        currentGroup.intermediates.push({ index: i, message: msg });
-      }
+      assistantRun.push({ index: i, message: msg });
     }
   }
 
-  // Push any remaining group
-  if (currentGroup) {
-    groups.push(currentGroup);
-  }
-
+  flushAssistantRun();
   return groups;
 }
 

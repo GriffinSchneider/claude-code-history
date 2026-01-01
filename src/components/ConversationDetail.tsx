@@ -7,13 +7,12 @@ import { formatMessage, shouldStartCollapsed, Message, extractTextContent, group
 import { useSelectableList } from '../hooks/useSelectableList.js';
 
 /**
- * A selectable row in the list - either a message or a group header
+ * A selectable row in the list - either a standalone message, group header, or group member
  */
 type ListItem =
-  | { type: 'user'; groupIndex: number; messageIndex: number; message: Message }
+  | { type: 'message'; groupIndex: number; messageIndex: number; message: Message }
   | { type: 'group-header'; groupIndex: number; count: number; expanded: boolean }
-  | { type: 'intermediate'; groupIndex: number; messageIndex: number; message: Message }
-  | { type: 'final'; groupIndex: number; messageIndex: number; message: Message };
+  | { type: 'group-member'; groupIndex: number; messageIndex: number; message: Message };
 
 /**
  * Estimate how many terminal lines a piece of text will take when wrapped
@@ -112,55 +111,34 @@ export function ConversationDetail({
   const listItems = useMemo((): ListItem[] => {
     const items: ListItem[] = [];
     groups.forEach((group, groupIndex) => {
-      // User message
-      if (group.userIndex >= 0) {
+      if (group.length === 1) {
+        // Single-message group - render at top level
         items.push({
-          type: 'user',
+          type: 'message',
           groupIndex,
-          messageIndex: group.userIndex,
-          message: group.userMessage,
+          messageIndex: group[0].index,
+          message: group[0].message,
         });
-      }
-
-      // If there's only 1 intermediate, show it directly (no group header)
-      if (group.intermediates.length === 1) {
-        items.push({
-          type: 'intermediate',
-          groupIndex,
-          messageIndex: group.intermediates[0].index,
-          message: group.intermediates[0].message,
-        });
-      } else if (group.intermediates.length > 1) {
-        // Multiple intermediates - show group header
+      } else {
+        // Multi-message group - collapsible
         const isExpanded = expandedGroups.has(groupIndex);
         items.push({
           type: 'group-header',
           groupIndex,
-          count: group.intermediates.length,
+          count: group.length,
           expanded: isExpanded,
         });
 
-        // If expanded, show intermediate messages
         if (isExpanded) {
-          for (const inter of group.intermediates) {
+          for (const indexed of group) {
             items.push({
-              type: 'intermediate',
+              type: 'group-member',
               groupIndex,
-              messageIndex: inter.index,
-              message: inter.message,
+              messageIndex: indexed.index,
+              message: indexed.message,
             });
           }
         }
-      }
-
-      // Final message (if exists)
-      if (group.final) {
-        items.push({
-          type: 'final',
-          groupIndex,
-          messageIndex: group.final.index,
-          message: group.final.message,
-        });
       }
     });
     return items;
@@ -294,14 +272,14 @@ export function ConversationDetail({
     if (!item || item.type !== 'group-header') return null;
     if (!item.expanded) return null;
 
-    // Find the range of items that belong to this group's intermediates
+    // Find the range of items that belong to this group's members
     const start = selectedIndex;
     let end = selectedIndex;
 
-    // Count forward through intermediate items of the same group
+    // Count forward through group-member items of the same group
     for (let i = selectedIndex + 1; i < listItems.length; i++) {
       const nextItem = listItems[i];
-      if (nextItem.type === 'intermediate' && nextItem.groupIndex === item.groupIndex) {
+      if (nextItem.type === 'group-member' && nextItem.groupIndex === item.groupIndex) {
         end = i;
       } else {
         break;
@@ -411,7 +389,7 @@ export function ConversationDetail({
       );
     }
 
-    // It's a message item (user, intermediate, or final)
+    // It's a message item (standalone or group member)
     const hasAgent = messageAgentIds.has(item.messageIndex);
     const isCollapsed = collapsedMessages.has(item.messageIndex);
 
