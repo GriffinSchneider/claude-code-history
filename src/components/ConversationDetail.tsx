@@ -1,10 +1,19 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import type { KeyEvent } from '@opentui/core';
 import { useTerminalDimensions } from '@opentui/react';
 import { spawn } from 'child_process';
 import { loadConversationMessages } from '../lib/history.js';
-import { formatMessage, shouldStartCollapsed, Message, extractTextContent } from '../lib/formatter.js';
+import { formatMessage, shouldStartCollapsed, Message, extractTextContent, groupMessages, MessageGroup } from '../lib/formatter.js';
 import { useSelectableList } from '../hooks/useSelectableList.js';
+
+/**
+ * A selectable row in the list - either a message or a group header
+ */
+type ListItem =
+  | { type: 'user'; groupIndex: number; messageIndex: number; message: Message }
+  | { type: 'group-header'; groupIndex: number; count: number; expanded: boolean }
+  | { type: 'intermediate'; groupIndex: number; messageIndex: number; message: Message }
+  | { type: 'final'; groupIndex: number; messageIndex: number; message: Message };
 
 /**
  * Estimate how many terminal lines a piece of text will take when wrapped
@@ -86,23 +95,109 @@ export function ConversationDetail({
 }: ConversationDetailProps) {
   const { width: termWidth, height: termHeight } = useTerminalDimensions();
   const [loading, setLoading] = useState(true);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [collapsedSet, setCollapsedSet] = useState<Set<number>>(new Set());
+  const [groups, setGroups] = useState<MessageGroup[]>([]);
+  // Which groups have their intermediate section expanded
+  const [expandedGroups, setExpandedGroups] = useState<Set<number>>(new Set());
+  // Which individual messages are collapsed (for their internal content)
+  const [collapsedMessages, setCollapsedMessages] = useState<Set<number>>(new Set());
   const [messageAgentIds, setMessageAgentIds] = useState<Map<number, string>>(new Map());
+  const [error, setError] = useState<string | null>(null);
 
   // Available height for messages (subtract header, divider, status bar)
   const availableHeight = termHeight - 3;
   // Content width (subtract padding and selection indicators)
   const contentWidth = termWidth - 6;
 
-  // Helper to get height of a specific message
-  const getMsgHeight = useCallback(
-    (idx: number) => getMessageHeight(messages[idx], collapsedSet.has(idx), contentWidth),
-    [messages, collapsedSet, contentWidth]
+  // Build list items from groups + expansion state
+  const listItems = useMemo((): ListItem[] => {
+    const items: ListItem[] = [];
+    groups.forEach((group, groupIndex) => {
+      // User message
+      if (group.userIndex >= 0) {
+        items.push({
+          type: 'user',
+          groupIndex,
+          messageIndex: group.userIndex,
+          message: group.userMessage,
+        });
+      }
+
+      // If there's only 1 intermediate, show it directly (no group header)
+      if (group.intermediates.length === 1) {
+        items.push({
+          type: 'intermediate',
+          groupIndex,
+          messageIndex: group.intermediates[0].index,
+          message: group.intermediates[0].message,
+        });
+      } else if (group.intermediates.length > 1) {
+        // Multiple intermediates - show group header
+        const isExpanded = expandedGroups.has(groupIndex);
+        items.push({
+          type: 'group-header',
+          groupIndex,
+          count: group.intermediates.length,
+          expanded: isExpanded,
+        });
+
+        // If expanded, show intermediate messages
+        if (isExpanded) {
+          for (const inter of group.intermediates) {
+            items.push({
+              type: 'intermediate',
+              groupIndex,
+              messageIndex: inter.index,
+              message: inter.message,
+            });
+          }
+        }
+      }
+
+      // Final message (if exists)
+      if (group.final) {
+        items.push({
+          type: 'final',
+          groupIndex,
+          messageIndex: group.final.index,
+          message: group.final.message,
+        });
+      }
+    });
+    return items;
+  }, [groups, expandedGroups]);
+
+  // Get height of a list item
+  const getItemHeight = useCallback(
+    (idx: number): number => {
+      const item = listItems[idx];
+      if (!item) return 1;
+
+      if (item.type === 'group-header') {
+        return 2; // 1 line + 1 margin
+      }
+
+      const isCollapsed = collapsedMessages.has(item.messageIndex);
+      return getMessageHeight(item.message, isCollapsed, contentWidth);
+    },
+    [listItems, collapsedMessages, contentWidth]
   );
 
-  const toggleCollapsed = useCallback((msgIndex: number) => {
-    setCollapsedSet((prev) => {
+  // Toggle group expansion
+  const toggleGroupExpanded = useCallback((groupIndex: number) => {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupIndex)) {
+        next.delete(groupIndex);
+      } else {
+        next.add(groupIndex);
+      }
+      return next;
+    });
+  }, []);
+
+  // Toggle individual message collapse
+  const toggleMessageCollapsed = useCallback((msgIndex: number) => {
+    setCollapsedMessages((prev) => {
       const next = new Set(prev);
       if (next.has(msgIndex)) {
         next.delete(msgIndex);
@@ -124,38 +219,47 @@ export function ConversationDetail({
       return true;
     }
 
-    // Spacebar toggles collapsed state
-    if (key.name === 'space') {
-      toggleCollapsed(selectedIndex);
+    const item = listItems[selectedIndex];
+
+    // Spacebar toggles collapsed/expanded state
+    if (key.name === 'space' && item) {
+      if (item.type === 'group-header') {
+        toggleGroupExpanded(item.groupIndex);
+      } else {
+        toggleMessageCollapsed(item.messageIndex);
+      }
       return true;
     }
 
-    // ! to open JSON file in $EDITOR
-    if (key.shift && key.name === '1') {
-      const editor = process.env.EDITOR || 'vim';
-      spawn(editor, [conversation.filePath], { stdio: 'inherit', shell: true });
+    // ! to copy JSONL file path to clipboard (for debugging)
+    if (key.name === '!') {
+      const proc = spawn('pbcopy', [], { stdio: 'pipe' });
+      proc.stdin?.write(conversation.filePath);
+      proc.stdin?.end();
       return true;
     }
 
     // s to open sidechain for current message (if it has one)
-    const agentId = messageAgentIds.get(selectedIndex);
-    if (key.name === 's' && agentId) {
-      onOpenSidechain(agentId, { scrollY, selectedMessage: selectedIndex });
-      return true;
+    if (key.name === 's' && item && item.type !== 'group-header') {
+      const agentId = messageAgentIds.get(item.messageIndex);
+      if (agentId) {
+        onOpenSidechain(agentId, { scrollY, selectedMessage: selectedIndex });
+        return true;
+      }
     }
 
     return false;
-  }, [onBack, onResume, conversation.sessionId, conversation.filePath, toggleCollapsed, messageAgentIds, onOpenSidechain]);
+  }, [onBack, onResume, conversation.sessionId, conversation.filePath, listItems, toggleGroupExpanded, toggleMessageCollapsed, messageAgentIds, onOpenSidechain]);
 
   const {
-    selectedIndex: selectedMessage,
+    selectedIndex,
     scrollY,
     totalHeight,
-    setSelectedIndex: setSelectedMessage,
+    setSelectedIndex,
     setScrollY,
   } = useSelectableList({
-    itemCount: messages.length,
-    getItemHeight: getMsgHeight,
+    itemCount: listItems.length,
+    getItemHeight,
     viewportHeight: availableHeight,
     initialSelected: savedState?.selectedMessage ?? 0,
     initialScrollY: savedState?.scrollY ?? 0,
@@ -166,20 +270,46 @@ export function ConversationDetail({
   useEffect(() => {
     if (savedState) {
       setScrollY(savedState.scrollY);
-      setSelectedMessage(savedState.selectedMessage);
+      setSelectedIndex(savedState.selectedMessage);
     } else {
       setScrollY(0);
-      setSelectedMessage(0);
+      setSelectedIndex(0);
     }
-  }, [conversation.filePath, savedState, setScrollY, setSelectedMessage]);
+  }, [conversation.filePath, savedState, setScrollY, setSelectedIndex]);
 
-  // Check if the currently selected message has an associated sidechain
-  const selectedAgentId = messageAgentIds.get(selectedMessage);
+  // Check if the currently selected item has an associated sidechain
+  const selectedItem = listItems[selectedIndex];
+  const selectedAgentId = selectedItem && selectedItem.type !== 'group-header'
+    ? messageAgentIds.get(selectedItem.messageIndex)
+    : undefined;
 
   // Notify parent when selected message's agent status changes
   useEffect(() => {
     onSelectedAgentChange(!!selectedAgentId);
   }, [selectedAgentId, onSelectedAgentChange]);
+
+  // Compute which items should have extended highlight (for group headers)
+  const highlightRange = useMemo((): { start: number; end: number } | null => {
+    const item = listItems[selectedIndex];
+    if (!item || item.type !== 'group-header') return null;
+    if (!item.expanded) return null;
+
+    // Find the range of items that belong to this group's intermediates
+    const start = selectedIndex;
+    let end = selectedIndex;
+
+    // Count forward through intermediate items of the same group
+    for (let i = selectedIndex + 1; i < listItems.length; i++) {
+      const nextItem = listItems[i];
+      if (nextItem.type === 'intermediate' && nextItem.groupIndex === item.groupIndex) {
+        end = i;
+      } else {
+        break;
+      }
+    }
+
+    return { start, end };
+  }, [listItems, selectedIndex]);
 
   // Load messages
   useEffect(() => {
@@ -188,19 +318,26 @@ export function ConversationDetail({
         const { messages: msgs, messageAgentIds: agentIds } = await loadConversationMessages(
           conversation.filePath
         );
-        setMessages(msgs);
         setMessageAgentIds(agentIds);
 
-        // Initialize collapsed state - messages with only collapsible content start collapsed
+        // Group the messages
+        const msgGroups = groupMessages(msgs);
+        setGroups(msgGroups);
+
+        // Initialize message collapsed state - messages with only collapsible content start collapsed
         const initialCollapsed = new Set<number>();
         msgs.forEach((msg, idx) => {
           if (shouldStartCollapsed(msg)) {
             initialCollapsed.add(idx);
           }
         });
-        setCollapsedSet(initialCollapsed);
+        setCollapsedMessages(initialCollapsed);
+
+        // Groups start collapsed (intermediates hidden)
+        // expandedGroups starts as empty Set, which means all collapsed
+        setError(null);
       } catch (err: any) {
-        setMessages([{ type: 'assistant', content: `Error loading: ${err.message}` }]);
+        setError(`Error loading: ${err.message}`);
       }
       setLoading(false);
     }
@@ -219,7 +356,90 @@ export function ConversationDetail({
     );
   }
 
-  const isSelectedCollapsed = collapsedSet.has(selectedMessage);
+  if (error) {
+    return (
+      <box flexDirection="column" flexGrow={1}>
+        <box paddingLeft={1} paddingRight={1} flexDirection="row">
+          <text fg="#ff0000">{error}</text>
+        </box>
+      </box>
+    );
+  }
+
+  // Helper to render a single list item
+  const renderItem = (item: ListItem, idx: number) => {
+    const isSelected = idx === selectedIndex;
+    // Check if this item is within the highlight range (extended selection for group header)
+    const isInHighlightRange = highlightRange && idx >= highlightRange.start && idx <= highlightRange.end;
+    const showHighlight = isSelected || isInHighlightRange;
+
+    const itemHeight = getItemHeight(idx);
+    const highlightBg = showHighlight ? '#0000ff' : undefined;
+    const highlightFg = showHighlight ? '#ffffff' : undefined;
+
+    // Build the highlight column - spans content height (itemHeight includes 1 line margin)
+    // When in a highlight range, include the margin to make it continuous (except for last item)
+    const isLastInRange = !highlightRange || idx === highlightRange.end;
+    const highlightHeight = showHighlight && !isLastInRange
+      ? itemHeight  // Include margin for continuity
+      : itemHeight - 1;  // Exclude margin
+    const highlightCol = (
+      <box flexDirection="column" width={1}>
+        {Array.from({ length: highlightHeight }, (_, i) => (
+          <text key={i} bg={highlightBg} fg={highlightFg}>
+            {i === 0 && isSelected ? '>' : ' '}
+          </text>
+        ))}
+      </box>
+    );
+
+    if (item.type === 'group-header') {
+      const arrowChar = item.expanded ? '▼' : '▶';
+      return (
+        <box key={`header-${item.groupIndex}`} height={itemHeight} flexDirection="column">
+          <box flexDirection="row" flexGrow={1}>
+            {highlightCol}
+            <text> </text>
+            <box flexDirection="column" flexGrow={1}>
+              <text fg="#808080">
+                <span>{arrowChar} </span>
+                <span fg="#666666">[{item.count} message{item.count !== 1 ? 's' : ''}]</span>
+              </text>
+            </box>
+          </box>
+        </box>
+      );
+    }
+
+    // It's a message item (user, intermediate, or final)
+    const hasAgent = messageAgentIds.has(item.messageIndex);
+    const isCollapsed = collapsedMessages.has(item.messageIndex);
+
+    return (
+      <box key={`msg-${item.messageIndex}`} height={itemHeight} flexDirection="column">
+        <box flexDirection="row" flexGrow={1}>
+          {highlightCol}
+          <text fg="#ff00ff">{hasAgent ? '◆' : ' '}</text>
+          <box flexDirection="column" flexGrow={1}>
+            {formatMessage(item.message, isCollapsed)}
+          </box>
+        </box>
+      </box>
+    );
+  };
+
+  // Get status text for selected item
+  const getStatusText = () => {
+    const item = selectedItem;
+    if (!item) return '';
+
+    if (item.type === 'group-header') {
+      return item.expanded ? '[expanded - space to collapse]' : '[space to expand]';
+    }
+
+    const isCollapsed = collapsedMessages.has(item.messageIndex);
+    return isCollapsed ? '[collapsed]' : '';
+  };
 
   return (
     <box flexDirection="column" flexGrow={1}>
@@ -236,33 +456,15 @@ export function ConversationDetail({
 
       <box flexDirection="column" flexGrow={1} overflow='hidden'>
         <box flexDirection="column" marginTop={-scrollY}>
-          {messages.map((msg, i) => {
-            const isSelected = i === selectedMessage;
-            const hasAgent = messageAgentIds.has(i);
-            const isCollapsed = collapsedSet.has(i);
-            const msgHeight = getMsgHeight(i);
-            return (
-              <box key={i} height={msgHeight} flexDirection="column">
-                <box flexDirection="row" flexGrow={1}>
-                  <text bg={isSelected ? '#0000ff' : undefined} fg={isSelected ? '#ffffff' : undefined}>
-                    {isSelected ? '>' : ' '}
-                  </text>
-                  <text fg="#ff00ff">{hasAgent ? '◆' : ' '}</text>
-                  <box flexDirection="column" flexGrow={1}>
-                    {formatMessage(msg, isCollapsed)}
-                  </box>
-                </box>
-              </box>
-            );
-          })}
+          {listItems.map((item, i) => renderItem(item, i))}
         </box>
       </box>
 
       <box height={1}>
         <text fg="#808080">
           {isInSidechain && <span fg="#ffff00">[Sidechain] </span>}
-          Msg {selectedMessage + 1}/{messages.length}
-          {isSelectedCollapsed ? ' [collapsed]' : ''}
+          Item {selectedIndex + 1}/{listItems.length}
+          {getStatusText() && ` ${getStatusText()}`}
           {maxScrollY > 0 && ` (${Math.round((scrollY / maxScrollY) * 100)}%)`}
           {selectedAgentId && (
             <span>

@@ -8,6 +8,88 @@ export interface Message {
 }
 
 /**
+ * A group of messages: user message → intermediate responses → final text response
+ */
+export interface MessageGroup {
+  userIndex: number;
+  userMessage: Message;
+  /** Intermediate messages (tool-only, thinking-only assistant messages) */
+  intermediates: { index: number; message: Message }[];
+  /** Final assistant message with text content (may not exist if conversation is in progress) */
+  final?: { index: number; message: Message };
+}
+
+/**
+ * Check if an assistant message has substantive text content (not just tool use/thinking)
+ */
+export function hasTextContent(message: Message): boolean {
+  if (message.type === 'user') return true;
+  if (typeof message.content === 'string') return message.content.trim().length > 0;
+  if (!Array.isArray(message.content)) return false;
+  return message.content.some((block: any) => block.type === 'text' && block.text?.trim());
+}
+
+/**
+ * Group messages into user → intermediates → final structure
+ * Groups are only finalized when we see the next user message, not when we see text content.
+ */
+export function groupMessages(messages: Message[]): MessageGroup[] {
+  const groups: MessageGroup[] = [];
+  let currentGroup: MessageGroup | null = null;
+
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+
+    if (msg.type === 'user') {
+      // Finalize and push any existing group
+      if (currentGroup) {
+        groups.push(currentGroup);
+      }
+      // Start a new group
+      currentGroup = {
+        userIndex: i,
+        userMessage: msg,
+        intermediates: [],
+      };
+    } else if (msg.type === 'assistant') {
+      if (!currentGroup) {
+        // Orphan assistant message - create a synthetic group
+        currentGroup = {
+          userIndex: -1,
+          userMessage: msg,
+          intermediates: [],
+        };
+        // If it has text, it's already the "final" (userMessage serves as display)
+        // If not, it'll be updated below
+        if (hasTextContent(msg)) {
+          continue; // userMessage already set, move on
+        }
+      }
+
+      // Add to current group
+      if (hasTextContent(msg)) {
+        // This becomes the final message (or updates it if we see another with text)
+        // Move any previous final to intermediates
+        if (currentGroup.final) {
+          currentGroup.intermediates.push(currentGroup.final);
+        }
+        currentGroup.final = { index: i, message: msg };
+      } else {
+        // Intermediate message (tool use, thinking only)
+        currentGroup.intermediates.push({ index: i, message: msg });
+      }
+    }
+  }
+
+  // Push any remaining group
+  if (currentGroup) {
+    groups.push(currentGroup);
+  }
+
+  return groups;
+}
+
+/**
  * Check if a message should start collapsed by default
  * (only if it ONLY contains collapsible content, no text)
  */
