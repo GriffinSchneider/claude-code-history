@@ -10,14 +10,7 @@ interface Conversation {
   lastTimestamp: string;
   messageCount: number;
   summary: string;
-  firstUserMessage: string;
-  lastUserMessage: string;
 }
-
-// Calculate height of a conversation item (2 or 3 lines)
-const getItemHeight = (conv: Conversation) => {
-  return (conv.lastUserMessage && conv.lastUserMessage !== conv.firstUserMessage) ? 3 : 2;
-};
 
 interface ConversationListProps {
   conversations: Conversation[];
@@ -25,16 +18,13 @@ interface ConversationListProps {
   onQuit: () => void;
 }
 
-export function ConversationList({ conversations, onSelect, onQuit }: ConversationListProps) {
-  const { width: terminalWidth, height: terminalHeight } = useTerminalDimensions();
-  const availableHeight = terminalHeight - 3; // header + status bar
-  // Account for: 2 padding, 1 selection indicator, 3 indentation prefix
-  const summaryWidth = Math.max(40, terminalWidth - 10);
+const ITEM_HEIGHT = 2;
+const HEADER_HEIGHT = 2;
 
-  const getItemHeightByIndex = useCallback(
-    (index: number) => getItemHeight(conversations[index]),
-    [conversations]
-  );
+export function ConversationList({ conversations, onSelect, onQuit }: ConversationListProps) {
+  const { width: termWidth, height: termHeight } = useTerminalDimensions();
+  const availableHeight = termHeight - HEADER_HEIGHT - 2; // header + status bar
+  const summaryWidth = Math.max(40, termWidth - 10);
 
   const handleKey = useCallback((key: KeyEvent, { selectedIndex }: { selectedIndex: number }): boolean => {
     if (key.name === 'q') {
@@ -52,20 +42,22 @@ export function ConversationList({ conversations, onSelect, onQuit }: Conversati
 
   const { selectedIndex, scrollY } = useSelectableList({
     itemCount: conversations.length,
-    getItemHeight: getItemHeightByIndex,
     viewportHeight: availableHeight,
+    itemHeight: ITEM_HEIGHT,
     onKey: handleKey,
   });
 
   if (conversations.length === 0) {
     return (
       <box flexDirection="column" flexGrow={1}>
-        <box paddingLeft={1} paddingRight={1} flexDirection="row">
-          <text fg="#808080">No conversations found in ~/.claude/projects</text>
+        <box flexDirection="row" height={1}>
+          <text fg="#808080">No conversations found</text>
         </box>
       </box>
     );
   }
+
+  const totalHeight = conversations.length * ITEM_HEIGHT;
 
   return (
     <box flexDirection="column" flexGrow={1}>
@@ -76,37 +68,31 @@ export function ConversationList({ conversations, onSelect, onQuit }: Conversati
         </text>
       </box>
       <box paddingLeft={1} paddingRight={1} flexDirection="row" height={1}>
-        <text fg="#808080">{'─'.repeat(Math.max(1, terminalWidth - 4))}</text>
+        <text fg="#808080">{'─'.repeat(Math.max(1, termWidth - 4))}</text>
       </box>
 
       <box flexDirection="column" flexGrow={1} overflow="hidden">
-        <box flexDirection="column" marginTop={-scrollY} overflow="hidden">
-          {conversations.map((conv: Conversation, i: number) => {
+        <box flexDirection="column" height={totalHeight} marginTop={-scrollY}>
+          {conversations.map((conv, i) => {
             const isSelected = i === selectedIndex;
-            const hasLastMsg = conv.lastUserMessage && conv.lastUserMessage !== conv.firstUserMessage;
-            const itemHeight = hasLastMsg ? 3 : 2;
             return (
-              <box key={conv.id} paddingLeft={1} paddingRight={1} height={itemHeight} flexDirection="column">
-                <text>
-                  <span bg={isSelected ? '#0000ff' : undefined} fg={isSelected ? '#ffffff' : undefined}>
-                    {isSelected ? '>' : ' '}
-                  </span>
-                  <span> </span>
-                  <b>{conv.projectName}</b>
-                  <span fg="#808080"> · {formatTimestamp(conv.lastTimestamp)} · {conv.messageCount} msgs</span>
-                </text>
-                <text fg="#808080">
-                  <span bg={isSelected ? '#0000ff' : undefined}> </span>
-                  <span>  {truncate(conv.summary, summaryWidth)}</span>
-                </text>
-                {hasLastMsg && (
+              <box key={conv.id} flexDirection="column" height={ITEM_HEIGHT}>
+                <box flexDirection="row" height={1}>
+                  <text>
+                    <span bg={isSelected ? '#0000ff' : undefined} fg={isSelected ? '#ffffff' : undefined}>
+                      {isSelected ? '>' : ' '}
+                    </span>
+                    <span> </span>
+                    <b>{conv.projectName}</b>
+                    <span fg="#808080"> · {formatTimestamp(conv.lastTimestamp)} · {conv.messageCount} msgs</span>
+                  </text>
+                </box>
+                <box flexDirection="row" height={1}>
                   <text fg="#808080">
                     <span bg={isSelected ? '#0000ff' : undefined}> </span>
-                    <span>  </span>
-                    <span fg="#606060">→ </span>
-                    <span>{truncate(conv.lastUserMessage, summaryWidth - 2)}</span>
+                    <span>  {truncate(conv.summary, summaryWidth)}</span>
                   </text>
-                )}
+                </box>
               </box>
             );
           })}

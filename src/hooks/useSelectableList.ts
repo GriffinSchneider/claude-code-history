@@ -1,45 +1,45 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import type { KeyEvent } from '@opentui/core';
 import { useKeyboard } from '@opentui/react';
 
+interface Measurable {
+  height: number;
+}
+
 export interface UseSelectableListOptions {
-  /** Total number of items in the list */
+  /** Total number of items */
   itemCount: number;
-  /** Function to get the height (in lines) of an item at a given index */
-  getItemHeight: (index: number) => number;
-  /** Available viewport height in lines */
+  /** Viewport height in lines */
   viewportHeight: number;
-  /** Initial selected index */
-  initialSelected?: number;
-  /** Initial scroll Y offset (in lines) */
-  initialScrollY?: number;
-  /** Additional keyboard handler for component-specific keys. Return true to prevent default navigation. */
-  onKey?: (key: KeyEvent, state: { selectedIndex: number; scrollY: number }) => boolean | void;
+  /** Default height for items not yet measured */
+  defaultItemHeight?: number;
+  /** Additional keyboard handler. Return true to prevent default navigation. */
+  onKey?: (key: KeyEvent, state: { selectedIndex: number }) => boolean | void;
 }
 
 export interface UseSelectableListResult {
-  /** Currently selected item index */
   selectedIndex: number;
-  /** Scroll offset in lines (use as negative marginTop) */
   scrollY: number;
-  /** Total height of all items in lines */
   totalHeight: number;
-  /** Set selection programmatically */
-  setSelectedIndex: (index: number | ((prev: number) => number)) => void;
-  /** Set scroll Y programmatically */
-  setScrollY: (y: number | ((prev: number) => number)) => void;
+  setSelectedIndex: (index: number) => void;
+  /** Get a ref callback for an item to measure its height */
+  getItemRef: (index: number) => (node: Measurable | null) => void;
 }
 
 export function useSelectableList({
   itemCount,
-  getItemHeight,
   viewportHeight,
-  initialSelected = 0,
-  initialScrollY = 0,
+  defaultItemHeight = 1,
   onKey,
 }: UseSelectableListOptions): UseSelectableListResult {
-  const [selectedIndex, setSelectedIndex] = useState(initialSelected);
-  const [scrollY, setScrollY] = useState(initialScrollY);
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [scrollY, setScrollY] = useState(0);
+  const [heights, setHeights] = useState<Map<number, number>>(new Map());
+
+  // Store refs to nodes
+  const nodeRefs = useRef<Map<number, Measurable>>(new Map());
+  // Cache ref callbacks to avoid recreating them
+  const refCallbacks = useRef<Map<number, (node: Measurable | null) => void>>(new Map());
 
   // Clamp selection when itemCount changes
   useEffect(() => {
@@ -48,81 +48,81 @@ export function useSelectableList({
     }
   }, [itemCount, selectedIndex]);
 
-  // Calculate Y position of each item (cumulative heights)
-  const itemPositions = useMemo(() => {
+  // Get height for an item (measured or default)
+  const getHeight = useCallback((index: number) => {
+    return heights.get(index) ?? defaultItemHeight;
+  }, [heights, defaultItemHeight]);
+
+  // Calculate item positions (cumulative heights)
+  const { itemPositions, totalHeight } = useMemo(() => {
     const positions: number[] = [];
     let y = 0;
     for (let i = 0; i < itemCount; i++) {
       positions.push(y);
-      y += getItemHeight(i);
+      y += getHeight(i);
     }
-    return positions;
-  }, [itemCount, getItemHeight]);
+    return { itemPositions: positions, totalHeight: y };
+  }, [itemCount, getHeight]);
 
-  // Total content height
-  const totalHeight = useMemo(() => {
-    if (itemCount === 0) return 0;
-    return itemPositions[itemCount - 1] + getItemHeight(itemCount - 1);
-  }, [itemCount, itemPositions, getItemHeight]);
-
-  // Estimate visible item count for page up/down
-  const avgItemHeight = itemCount > 0 ? totalHeight / itemCount : 1;
-  const visibleCount = Math.max(1, Math.floor(viewportHeight / avgItemHeight));
+  // Get ref callback for an item
+  const getItemRef = useCallback((index: number) => {
+    let callback = refCallbacks.current.get(index);
+    if (!callback) {
+      callback = (node: Measurable | null) => {
+        if (node) {
+          nodeRefs.current.set(index, node);
+          // Measure immediately
+          const h = node.height;
+          setHeights(prev => {
+            if (prev.get(index) === h) return prev;
+            const next = new Map(prev);
+            next.set(index, h);
+            return next;
+          });
+        } else {
+          nodeRefs.current.delete(index);
+        }
+      };
+      refCallbacks.current.set(index, callback);
+    }
+    return callback;
+  }, []);
 
   // Auto-scroll to keep selected item visible
   useEffect(() => {
     if (itemCount === 0) return;
 
-    const itemY = itemPositions[selectedIndex];
-    const itemHeight = getItemHeight(selectedIndex);
-    const itemBottom = itemY + itemHeight;
+    const itemY = itemPositions[selectedIndex] ?? 0;
+    const itemH = getHeight(selectedIndex);
+    const itemBottom = itemY + itemH;
 
-    // Item is above viewport - scroll up
     if (itemY < scrollY) {
       setScrollY(itemY);
-    }
-    // Item is below viewport - scroll down
-    else if (itemBottom > scrollY + viewportHeight) {
+    } else if (itemBottom > scrollY + viewportHeight) {
       setScrollY(itemBottom - viewportHeight);
     }
-  }, [selectedIndex, scrollY, itemCount, itemPositions, getItemHeight, viewportHeight]);
+  }, [selectedIndex, scrollY, itemCount, itemPositions, getHeight, viewportHeight]);
+
+  // Estimate visible count for page navigation
+  const avgHeight = itemCount > 0 ? totalHeight / itemCount : defaultItemHeight;
+  const visibleCount = Math.max(1, Math.floor(viewportHeight / avgHeight));
 
   useKeyboard((key: KeyEvent) => {
-    // Let component handle key first
-    if (onKey?.(key, { selectedIndex, scrollY })) return;
+    if (onKey?.(key, { selectedIndex })) return;
 
-    // j/k for selection
     if (key.name === 'k' || key.name === 'up') {
-      setSelectedIndex((prev) => Math.max(0, prev - 1));
+      setSelectedIndex(Math.max(0, selectedIndex - 1));
     }
     if (key.name === 'j' || key.name === 'down') {
-      setSelectedIndex((prev) => Math.min(itemCount - 1, prev + 1));
+      setSelectedIndex(Math.min(itemCount - 1, selectedIndex + 1));
     }
-
-    // Page up/down
     if (key.name === 'pageup') {
-      setSelectedIndex((prev) => Math.max(0, prev - visibleCount));
+      setSelectedIndex(Math.max(0, selectedIndex - visibleCount));
     }
     if (key.name === 'pagedown') {
-      setSelectedIndex((prev) => Math.min(itemCount - 1, prev + visibleCount));
-    }
-
-    // Ctrl+u/d for half-page movement
-    if (key.ctrl && key.name === 'u') {
-      const halfPage = Math.max(1, Math.floor(visibleCount / 2));
-      setSelectedIndex((prev) => Math.max(0, prev - halfPage));
-    }
-    if (key.ctrl && key.name === 'd') {
-      const halfPage = Math.max(1, Math.floor(visibleCount / 2));
-      setSelectedIndex((prev) => Math.min(itemCount - 1, prev + halfPage));
+      setSelectedIndex(Math.min(itemCount - 1, selectedIndex + visibleCount));
     }
   });
 
-  return {
-    selectedIndex,
-    scrollY,
-    totalHeight,
-    setSelectedIndex,
-    setScrollY,
-  };
+  return { selectedIndex, scrollY, totalHeight, setSelectedIndex, getItemRef };
 }
