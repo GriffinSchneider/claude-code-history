@@ -184,7 +184,7 @@ export function formatGroup(group: MessageGroup, collapsed: boolean, palette: De
     // Show summary line
     const isUser = group.messages[0]?.type === 'user';
     return (
-      <text fg={isUser ? palette.brightCyan : undefined}>
+      <text fg={isUser ? palette.brightCyan : palette.brightBlack}>
         {group.summary}
       </text>
     );
@@ -224,9 +224,9 @@ function formatUserMessage(content: any, collapsed: boolean, palette: DefinitePa
     return <text fg={palette.brightCyan}><b>You:</b> {truncate(text, 70)}</text>;
   }
   return (
-    <box flexDirection="column">
+    <box flexDirection="column" backgroundColor="#222222">
       <text fg={palette.brightCyan}><b>You:</b></text>
-      <text>{text}</text>
+      <markdown syntaxStyle={syntaxStyle} content={text} />
     </box>
   );
 }
