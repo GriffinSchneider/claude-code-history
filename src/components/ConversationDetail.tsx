@@ -104,7 +104,8 @@ export function ConversationDetail({
     if (itemY < scrollY) {
       setScrollY(itemY);
     } else if (itemBottom > scrollY + availableHeight) {
-      setScrollY(Math.max(0, itemBottom - availableHeight));
+      // Scroll to show bottom, but never past the top (prevents oscillation for tall items)
+      setScrollY(Math.max(0, Math.min(itemY, itemBottom - availableHeight)));
     }
   }, [selectedIndex, scrollY, groups.length, availableHeight]);
 
