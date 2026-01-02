@@ -139,7 +139,17 @@ export function ConversationDetail({
         setMessages(msgs);
         itemRefs.current = new Map();
         refCallbacks.current = new Map();
-        setCollapsed(new Set()); // Start with everything expanded
+
+        // Start with multi-item groups collapsed
+        const loadedGroups = groupMessages(msgs);
+        const initialCollapsed = new Set<number>();
+        loadedGroups.forEach((group, i) => {
+          if (group.messages.length > 1) {
+            initialCollapsed.add(i);
+          }
+        });
+        setCollapsed(initialCollapsed);
+
         setSelectedIndex(0);
         setScrollY(0);
         setError(null);
