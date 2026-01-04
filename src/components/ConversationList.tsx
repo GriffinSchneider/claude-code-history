@@ -10,6 +10,7 @@ interface Conversation {
   lastTimestamp: string;
   messageCount: number;
   summary: string;
+  lastUserMessage?: string;
 }
 
 interface ConversationListProps {
@@ -18,8 +19,24 @@ interface ConversationListProps {
   onQuit: () => void;
 }
 
-const ITEM_HEIGHT = 2;
+const BASE_ITEM_HEIGHT = 2;
 const HEADER_HEIGHT = 2;
+
+/**
+ * Check if lastUserMessage is meaningfully different from summary
+ */
+function hasDistinctLastMessage(conv: Conversation): boolean {
+  if (!conv.lastUserMessage || !conv.summary) return false;
+  // Normalize for comparison (trim, lowercase, collapse whitespace)
+  const normLast = conv.lastUserMessage.trim().toLowerCase().replace(/\s+/g, ' ');
+  const normSummary = conv.summary.trim().toLowerCase().replace(/\s+/g, ' ');
+  // Check if one starts with the other (since summary might be truncated)
+  return !normSummary.startsWith(normLast) && !normLast.startsWith(normSummary);
+}
+
+function getItemHeight(conv: Conversation): number {
+  return hasDistinctLastMessage(conv) ? 3 : 2;
+}
 
 export function ConversationList({ conversations, onSelect, onQuit }: ConversationListProps) {
   const { width: termWidth, height: termHeight } = useTerminalDimensions();
@@ -40,10 +57,10 @@ export function ConversationList({ conversations, onSelect, onQuit }: Conversati
     return false;
   }, [conversations, onQuit, onSelect]);
 
-  const { selectedIndex, scrollY } = useSelectableList({
+  const { selectedIndex, scrollY, totalHeight, getItemRef } = useSelectableList({
     itemCount: conversations.length,
     viewportHeight: availableHeight,
-    itemHeight: ITEM_HEIGHT,
+    defaultItemHeight: BASE_ITEM_HEIGHT,
     onKey: handleKey,
   });
 
@@ -56,8 +73,6 @@ export function ConversationList({ conversations, onSelect, onQuit }: Conversati
       </box>
     );
   }
-
-  const totalHeight = conversations.length * ITEM_HEIGHT;
 
   return (
     <box flexDirection="column" flexGrow={1}>
@@ -72,11 +87,13 @@ export function ConversationList({ conversations, onSelect, onQuit }: Conversati
       </box>
 
       <box flexDirection="column" flexGrow={1} overflow="hidden">
-        <box flexDirection="column" height={totalHeight} marginTop={-scrollY}>
+        <box flexDirection="column" height={Math.max(10000, totalHeight)} marginTop={-scrollY}>
           {conversations.map((conv, i) => {
             const isSelected = i === selectedIndex;
+            const showLastMessage = hasDistinctLastMessage(conv);
+            const itemHeight = getItemHeight(conv);
             return (
-              <box key={conv.id} flexDirection="column" height={ITEM_HEIGHT}>
+              <box key={conv.id} ref={getItemRef(i)} flexDirection="column" height={itemHeight}>
                 <box flexDirection="row" height={1}>
                   <text>
                     <span bg={isSelected ? '#0000ff' : undefined} fg={isSelected ? '#ffffff' : undefined}>
@@ -93,6 +110,14 @@ export function ConversationList({ conversations, onSelect, onQuit }: Conversati
                     <span>  {truncate(conv.summary, summaryWidth)}</span>
                   </text>
                 </box>
+                {showLastMessage && (
+                  <box flexDirection="row" height={1}>
+                    <text fg="#666666">
+                      <span bg={isSelected ? '#0000ff' : undefined}> </span>
+                      <span>  ↳ {truncate(conv.lastUserMessage!, summaryWidth - 2)}</span>
+                    </text>
+                  </box>
+                )}
               </box>
             );
           })}
