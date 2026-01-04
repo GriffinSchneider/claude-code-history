@@ -40,7 +40,6 @@ harness.destroy();
 
 ### Notes
 
-- React `act()` warnings in stderr are expected and harmless - async state updates during settle
 - `--settle` time needs to be long enough for conversation data to load (~500ms)
 - Output is plain text matching what would appear on screen
 

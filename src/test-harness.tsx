@@ -21,6 +21,7 @@ import { KeyCodes, type MockInput } from "@opentui/core/testing";
 import { writeFile } from "fs/promises";
 import { App } from "./components/App";
 import type { DefinitePalette } from "./index";
+import { act } from "react";
 
 export { KeyCodes };
 
@@ -84,41 +85,51 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
   const height = options.height ?? 24;
   const settleTime = options.settleTime ?? 50;
 
-  const testSetup = await testRender(<App palette={DEFAULT_PALETTE} />, {
-    width,
-    height,
+  let testSetup!: Awaited<ReturnType<typeof testRender>>;
+  await act(async () => {
+    testSetup = await testRender(<App palette={DEFAULT_PALETTE} />, {
+      width,
+      height,
+    });
   });
-
   const { mockInput, captureCharFrame, resize, renderer } = testSetup;
 
-  const settle = () => new Promise<void>((resolve) => setTimeout(resolve, settleTime));
+  // Wait for async state updates with polling. setTimeout must be INSIDE act()
+  // so React can catch state updates that happen during the wait.
+  const settle = async () => {
+    const interval = 16;
+    for (let t = 0; t < settleTime; t += interval) {
+      await act(async () => {
+        await new Promise<void>((r) => setTimeout(r, interval));
+      });
+    }
+  };
 
-  // Do initial render
-  await testSetup.renderOnce();
+  // Initial settle for async data loading
   await settle();
 
   return {
     async pressKey(key: string) {
-      // Check if it's a KeyCodes constant name
-      if (key in KeyCodes) {
-        mockInput.pressKey(key as keyof typeof KeyCodes);
-      } else {
-        // Single character
-        mockInput.pressKey(key);
-      }
-      await testSetup.renderOnce();
-      await settle();
-    },
-
-    async pressKeys(keys: string[]) {
-      for (const key of keys) {
+      await act(async () => {
         if (key in KeyCodes) {
           mockInput.pressKey(key as keyof typeof KeyCodes);
         } else {
           mockInput.pressKey(key);
         }
-      }
-      await testSetup.renderOnce();
+      });
+      await settle();
+    },
+
+    async pressKeys(keys: string[]) {
+      await act(async () => {
+        for (const key of keys) {
+          if (key in KeyCodes) {
+            mockInput.pressKey(key as keyof typeof KeyCodes);
+          } else {
+            mockInput.pressKey(key);
+          }
+        }
+      });
       await settle();
     },
 
@@ -131,9 +142,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
       await writeFile(filePath, content + "\n", "utf-8");
     },
 
-    resize(w: number, h: number) {
-      resize(w, h);
-    },
+    resize: (w: number, h: number) => resize(w, h),
 
     destroy() {
       renderer.destroy();
