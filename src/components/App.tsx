@@ -32,8 +32,9 @@ export function App({ palette, onResume, onQuit }: AppProps) {
 
   useEffect(() => {
     async function load() {
-      const convos = await loadConversations();
-      setConversations(convos as Conversation[]);
+      const convos = (await loadConversations())
+        .filter((conv) => conv.summary);
+      setConversations(convos);
       setLoading(false);
     }
     load();
