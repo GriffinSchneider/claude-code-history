@@ -1,0 +1,16 @@
+.DS_Store
+.idea/
+
+node_modules
+build/
+dist/
+generated/
+coverage/
+# From eslint --cache
+.eslintcache
+# From Claude Code
+**/CLAUDE.local.md
+.claude/settings.local.json
+.playwright-mcp
+
+*.~undo-tree~
