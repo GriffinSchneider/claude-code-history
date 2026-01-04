@@ -281,7 +281,8 @@ export async function loadConversationMessages(filePath: string): Promise<Loaded
         }
 
         // Skip empty user messages (tool approvals, etc.)
-        const textContent = extractTextContent(entry.message.content);
+        const textContent = extractUserMessage((extractTextContent(entry.message.content)));
+        if (!textContent) continue;
         if (textContent.trim()) {
           // Skip hidden commands and their responses
           if (isHiddenCommandMessage(textContent)) {
