@@ -1,13 +1,9 @@
 #!/usr/bin/env node
 
-import React from 'react';
 import { createCliRenderer, TerminalColors } from '@opentui/core';
 import { createRoot } from '@opentui/react';
 import { App } from './components/App.js';
 import { resumeSession } from './lib/claude.js';
-
-// Track if we're resuming a session after exit
-let resumeSessionId: string | null = null;
 
 export interface DefinitePalette {
   defaultForeground: string;
@@ -85,52 +81,23 @@ async function main() {
     <App
       palette={palette}
       onResume={(sessionId) => {
-        resumeSessionId = sessionId;
-        root.unmount();
         renderer.destroy();
+        resumeSession(sessionId);
       }}
       onQuit={() => {
-        root.unmount();
         renderer.destroy();
       }}
     />
   );
 
-  // Handle cleanup on process exit
-  const cleanup = () => {
-    root.unmount();
-    renderer.destroy();
-  };
-
   process.on('SIGINT', () => {
-    cleanup();
+    renderer.destroy();
     process.exit(0);
   });
   process.on('SIGTERM', () => {
-    cleanup();
+    renderer.destroy();
     process.exit(0);
   });
-
-  // Wait for renderer to be destroyed (either via quit or resume)
-  await new Promise<void>((resolve) => {
-    const checkDestroyed = setInterval(() => {
-      if (!renderer.isRunning) {
-        clearInterval(checkDestroyed);
-        resolve();
-      }
-    }, 100);
-  });
-
-  if (resumeSessionId) {
-    // Fully release stdin before spawning so there's no contention
-    process.stdin.pause();
-    process.stdin.removeAllListeners();
-    if (process.stdin.isTTY && process.stdin.setRawMode) {
-      process.stdin.setRawMode(false);
-    }
-
-    resumeSession(resumeSessionId);
-  }
 }
 
 main().catch((err) => {

@@ -11,10 +11,8 @@ export function resumeSession(sessionId: string) {
 
   child.on('error', (err) => {
     console.error('Failed to launch claude:', err.message);
-    process.exit(1);
   });
 
   child.on('exit', (code) => {
-    process.exit(code ?? 0);
   });
 }
