@@ -1,5 +1,51 @@
 # Agent Notes
 
+
+
+## Visual Testing Harness
+
+`src/test-harness.tsx` provides headless rendering and screenshot capture for the TUI. Use this to verify UI changes without manually running the app.
+
+### CLI Usage
+
+```bash
+# Capture initial list view (use --settle to wait for async data loading)
+bun src/test-harness.tsx --settle 500 -o list.txt
+
+# Navigate down 2 items and enter detail view
+bun src/test-harness.tsx --settle 500 -k j -k j -k RETURN -o detail.txt
+
+# Print to stdout instead of file
+bun src/test-harness.tsx --settle 500 -k j -k j
+```
+
+### Key Names
+
+Use these for special keys: `RETURN`, `ESCAPE`, `TAB`, `BACKSPACE`, `DELETE`, `HOME`, `END`, `ARROW_UP`, `ARROW_DOWN`, `ARROW_LEFT`, `ARROW_RIGHT`, `F1`-`F12`
+
+Regular characters work as-is: `-k j`, `-k q`, `-k /`
+
+### Programmatic API
+
+```typescript
+import { createHarness } from './test-harness';
+
+const harness = await createHarness({ width: 80, height: 24, settleTime: 500 });
+await harness.pressKey('j');
+await harness.pressKey('RETURN');
+const screen = harness.capture();  // plain text, no ANSI
+await harness.screenshot('out.txt');
+harness.destroy();
+```
+
+### Notes
+
+- React `act()` warnings in stderr are expected and harmless - async state updates during settle
+- `--settle` time needs to be long enough for conversation data to load (~500ms)
+- Output is plain text matching what would appear on screen
+
+
+
 ## OpenTUI Layout Gotchas
 
 ### Loading State Structure Must Match Main Render
