@@ -29,6 +29,7 @@ export function App({ palette, onResume, onQuit }: AppProps) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
   const [loading, setLoading] = useState(true);
+  const [listState, setListState] = useState<{ selectedIndex: number; scrollY: number }>({ selectedIndex: 0, scrollY: 0 });
 
   useEffect(() => {
     async function load() {
@@ -40,7 +41,8 @@ export function App({ palette, onResume, onQuit }: AppProps) {
     load();
   }, []);
 
-  const handleSelect = (conversation: Conversation) => {
+  const handleSelect = (conversation: Conversation, state: { selectedIndex: number; scrollY: number }) => {
+    setListState(state);
     setSelectedConversation(conversation);
     setView('detail');
   };
@@ -78,6 +80,8 @@ export function App({ palette, onResume, onQuit }: AppProps) {
             conversations={conversations as any}
             onSelect={handleSelect as any}
             onQuit={handleQuit}
+            initialSelectedIndex={listState.selectedIndex}
+            initialScrollY={listState.scrollY}
           />
         ) : (
           <ConversationDetail

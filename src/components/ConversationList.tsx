@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useRef, useEffect } from 'react';
 import type { KeyEvent } from '@opentui/core';
 import { useTerminalDimensions } from '@opentui/react';
 import { formatTimestamp, truncate } from '../lib/formatter.js';
@@ -15,8 +15,10 @@ interface Conversation {
 
 interface ConversationListProps {
   conversations: Conversation[];
-  onSelect: (conv: Conversation) => void;
+  onSelect: (conv: Conversation, listState: { selectedIndex: number; scrollY: number }) => void;
   onQuit: () => void;
+  initialSelectedIndex?: number;
+  initialScrollY?: number;
 }
 
 const BASE_ITEM_HEIGHT = 2;
@@ -38,31 +40,39 @@ function getItemHeight(conv: Conversation): number {
   return hasDistinctLastMessage(conv) ? 3 : 2;
 }
 
-export function ConversationList({ conversations, onSelect, onQuit }: ConversationListProps) {
+export function ConversationList({ conversations, onSelect, onQuit, initialSelectedIndex, initialScrollY }: ConversationListProps) {
   const { width: termWidth, height: termHeight } = useTerminalDimensions();
   const availableHeight = termHeight - HEADER_HEIGHT - 2; // header + status bar
   const summaryWidth = Math.max(40, termWidth - 10);
 
-  const handleKey = useCallback((key: KeyEvent, { selectedIndex }: { selectedIndex: number }): boolean => {
-    if (key.name === 'q') {
-      onQuit();
-      return true;
-    }
-    if (key.name === 'return') {
-      if (conversations[selectedIndex]) {
-        onSelect(conversations[selectedIndex]);
-      }
-      return true;
-    }
-    return false;
-  }, [conversations, onQuit, onSelect]);
+  // Use ref to track scrollY for the callback (avoids circular dependency)
+  const scrollYRef = useRef(initialScrollY ?? 0);
 
   const { selectedIndex, scrollY, totalHeight, getItemRef } = useSelectableList({
     itemCount: conversations.length,
     viewportHeight: availableHeight,
     defaultItemHeight: BASE_ITEM_HEIGHT,
-    onKey: handleKey,
+    initialSelectedIndex,
+    initialScrollY,
+    onKey: useCallback((key: KeyEvent, { selectedIndex: idx }: { selectedIndex: number }): boolean => {
+      if (key.name === 'q') {
+        onQuit();
+        return true;
+      }
+      if (key.name === 'return') {
+        if (conversations[idx]) {
+          onSelect(conversations[idx], { selectedIndex: idx, scrollY: scrollYRef.current });
+        }
+        return true;
+      }
+      return false;
+    }, [conversations, onQuit, onSelect]),
   });
+
+  // Keep the ref in sync with the current scrollY
+  useEffect(() => {
+    scrollYRef.current = scrollY;
+  }, [scrollY]);
 
   if (conversations.length === 0) {
     return (

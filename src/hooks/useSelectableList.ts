@@ -15,6 +15,10 @@ export interface UseSelectableListOptions {
   defaultItemHeight?: number;
   /** Additional keyboard handler. Return true to prevent default navigation. */
   onKey?: (key: KeyEvent, state: { selectedIndex: number }) => boolean | void;
+  /** Initial selected index (for restoring state) */
+  initialSelectedIndex?: number;
+  /** Initial scroll position (for restoring state) */
+  initialScrollY?: number;
 }
 
 export interface UseSelectableListResult {
@@ -31,9 +35,11 @@ export function useSelectableList({
   viewportHeight,
   defaultItemHeight = 1,
   onKey,
+  initialSelectedIndex = 0,
+  initialScrollY = 0,
 }: UseSelectableListOptions): UseSelectableListResult {
-  const [selectedIndex, setSelectedIndex] = useState(0);
-  const [scrollY, setScrollY] = useState(0);
+  const [selectedIndex, setSelectedIndex] = useState(initialSelectedIndex);
+  const [scrollY, setScrollY] = useState(initialScrollY);
   const [heights, setHeights] = useState<Map<number, number>>(new Map());
 
   // Store refs to nodes
